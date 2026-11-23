@@ -1,0 +1,16 @@
+# Store text with LF line endings in the repository (Linux servers, Docker builds, shell scripts).
+* text=auto eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

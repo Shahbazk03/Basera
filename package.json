@@ -1,0 +1,35 @@
+{
+  "name": "estate-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real estate marketplace and business management platform (modular monolith).",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "infra:up": "docker compose up -d postgres redis mailpit",
+    "infra:down": "docker compose down",
+    "build:shared": "npm run build -w @estate/shared",
+    "dev": "npm run build:shared && concurrently -k -n shared,api,web,console -c gray,blue,green,magenta \"npm run dev -w @estate/shared\" \"npm run dev -w @estate/api\" \"npm run dev -w @estate/web\" \"npm run dev -w @estate/console\"",
+    "build": "npm run build -w @estate/shared && npm run build -w @estate/api && npm run build -w @estate/web && npm run build -w @estate/console",
+    "typecheck": "npm run build:shared && npm run typecheck -w @estate/api && npm run typecheck -w @estate/web && npm run typecheck -w @estate/console",
+    "test": "npm run test -w @estate/shared && npm run test -w @estate/api",
+    "test:e2e": "playwright test",
+    "db:migrate": "npm run prisma:migrate -w @estate/api",
+    "db:deploy": "npm run prisma:deploy -w @estate/api",
+    "db:seed": "npm run prisma:seed -w @estate/api",
+    "db:reset": "npm run prisma:reset -w @estate/api",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^22.15.0",
+    "concurrently": "^10.0.7",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3"
+  }
+}

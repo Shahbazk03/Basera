@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+@import '@estate/ui/styles.css';
+
+@source '../../../packages/ui/src';
+
+html {
+  scroll-padding-top: 88px;
+}

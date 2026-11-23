@@ -1,0 +1,128 @@
+# Single-host production / staging stack. For production prefer managed PostgreSQL (with PostGIS),
+# managed Redis and S3-compatible object storage — point DATABASE_URL / REDIS_URL / S3_* at them and
+# remove the `postgres` and `redis` services.
+#
+#   cp infrastructure/deployment/.env.production.example infrastructure/deployment/.env  (fill in values)
+#   docker compose -f infrastructure/deployment/docker-compose.prod.yml --env-file infrastructure/deployment/.env up -d --build
+name: estate-prod
+
+x-api-env: &api-env
+  APP_ENV: ${APP_ENV:-production}
+  NODE_ENV: production
+  DATABASE_URL: ${DATABASE_URL}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  API_PORT: 4000
+  CORS_ORIGINS: https://${WEB_DOMAIN},https://${CONSOLE_DOMAIN}
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?required}
+  DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?required}
+  FILE_URL_SIGNING_SECRET: ${FILE_URL_SIGNING_SECRET:?required}
+  COOKIE_SECURE: 'true'
+  TRUST_PROXY_HOPS: 2
+  SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+  WEB_PUBLIC_URL: https://${WEB_DOMAIN}
+  CONSOLE_PUBLIC_URL: https://${CONSOLE_DOMAIN}
+  API_PUBLIC_URL: https://${WEB_DOMAIN}
+  PLATFORM_ROOT_DOMAIN: ${WEB_DOMAIN}
+  PLATFORM_MAIN_HOSTS: ${WEB_DOMAIN},www.${WEB_DOMAIN}
+  CUSTOM_DOMAIN_CNAME_TARGET: ${CUSTOM_DOMAIN_CNAME_TARGET}
+  CUSTOM_DOMAIN_A_RECORD: ${CUSTOM_DOMAIN_A_RECORD:-}
+  TLS_PROVIDER: caddy-on-demand
+  STORAGE_DRIVER: s3
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_BUCKET_PUBLIC: ${S3_BUCKET_PUBLIC:?required}
+  S3_BUCKET_PRIVATE: ${S3_BUCKET_PRIVATE:?required}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?required}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?required}
+  S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?required}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  MAIL_FROM: ${MAIL_FROM:-}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+  WHATSAPP_CLOUD_TOKEN: ${WHATSAPP_CLOUD_TOKEN:-}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-estate}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes: [redisdata:/data]
+
+  migrate:
+    build: { context: ../.., dockerfile: infrastructure/docker/api.Dockerfile, target: migrate }
+    environment: { DATABASE_URL: '${DATABASE_URL}' }
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: 'no'
+
+  api:
+    build: { context: ../.., dockerfile: infrastructure/docker/api.Dockerfile, target: runtime }
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/next.Dockerfile
+      args: { APP: web, API_INTERNAL_URL: 'http://api:4000', WEB_PUBLIC_URL: 'https://${WEB_DOMAIN}', CONSOLE_PUBLIC_URL: 'https://${CONSOLE_DOMAIN}', S3_PUBLIC_BASE_URL: '${S3_PUBLIC_BASE_URL}', NEXT_PUBLIC_TURNSTILE_SITE_KEY: '${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}', NEXT_PUBLIC_GOOGLE_MAPS_EMBED_KEY: '${NEXT_PUBLIC_GOOGLE_MAPS_EMBED_KEY:-}' }
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:4000
+      WEB_PUBLIC_URL: https://${WEB_DOMAIN}
+      CONSOLE_PUBLIC_URL: https://${CONSOLE_DOMAIN}
+      PLATFORM_ROOT_DOMAIN: ${WEB_DOMAIN}
+      PLATFORM_MAIN_HOSTS: ${WEB_DOMAIN},www.${WEB_DOMAIN}
+    depends_on: [api]
+
+  console:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/next.Dockerfile
+      args: { APP: console, API_INTERNAL_URL: 'http://api:4000', WEB_PUBLIC_URL: 'https://${WEB_DOMAIN}', CONSOLE_PUBLIC_URL: 'https://${CONSOLE_DOMAIN}', S3_PUBLIC_BASE_URL: '${S3_PUBLIC_BASE_URL}' }
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on: [api]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443', '443:443/udp']
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN}
+      CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web, console, api]
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

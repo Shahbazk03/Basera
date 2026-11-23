@@ -1,0 +1,33 @@
+{
+  "name": "@estate/console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Back-office console: admin, broker, developer, employee and lead-provider workspaces.",
+  "scripts": {
+    "dev": "next dev -p 3300",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@estate/api-client": "0.1.0",
+    "@estate/shared": "0.1.0",
+    "@estate/ui": "0.1.0",
+    "@hookform/resolvers": "^7.0.8",
+    "@tanstack/react-query": "^5.108.2",
+    "dotenv": "^18.0.10",
+    "lucide-react": "^1.77.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-hook-form": "^7.92.0",
+    "sonner": "^2.0.8",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.5"
+  }
+}

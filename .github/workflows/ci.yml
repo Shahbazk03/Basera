@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5-alpine
+        env:
+          POSTGRES_USER: estate
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: estate_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U estate -d estate_test" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://estate:ci-only-password@localhost:5432/estate_test?schema=public
+      TEST_DATABASE_URL: postgresql://estate:ci-only-password@localhost:5432/estate_test?schema=public
+      JWT_ACCESS_SECRET: ci-only-jwt-secret-that-is-long-enough-0123456789
+      DATA_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      FILE_URL_SIGNING_SECRET: ci-only-file-signing-secret
+      SEED_DEFAULT_PASSWORD: ci-only-Password1
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build shared package & generate Prisma client
+        run: |
+          npm run build -w @estate/shared
+          npm run prisma:generate -w @estate/api
+      - name: Typecheck
+        run: |
+          npm run typecheck -w @estate/api
+          npm run typecheck -w @estate/console
+          npm run typecheck -w @estate/web
+      - name: Unit tests
+        run: |
+          npm run test -w @estate/shared
+          npm run test:unit -w @estate/api
+      - name: Migrate test database
+        run: npm run prisma:deploy -w @estate/api
+      - name: Integration tests
+        run: npm run test:int -w @estate/api
+      - name: Build web & console
+        env:
+          API_INTERNAL_URL: http://localhost:4000
+          WEB_PUBLIC_URL: http://localhost:3200
+          CONSOLE_PUBLIC_URL: http://localhost:3300
+        run: |
+          npm run build -w @estate/web
+          npm run build -w @estate/console
+
+  docker:
+    if: github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          target: runtime
+          push: true
+          tags: ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+      - name: Build & push migration job
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          target: migrate
+          push: true
+          tags: ghcr.io/${{ github.repository }}/migrate:${{ github.sha }}

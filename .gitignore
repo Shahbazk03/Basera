@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+coverage/
+
+# Generated Prisma client
+apps/api/src/generated/
+
+# Environment files (never commit secrets) — only blank templates are tracked
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Database dumps and local tool settings
+*.dump
+*.sql.gz
+.claude/settings.local.json
+
+# Local file storage (development uploads)
+storage/
+apps/api/storage/
+
+# Test artefacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Logs & OS noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json

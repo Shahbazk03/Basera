@@ -1,0 +1,45 @@
+# Reverse proxy with automatic HTTPS.
+# Project subdomains and verified custom domains use on-demand TLS: before Caddy requests a
+# certificate for an unknown hostname it calls the API, which approves ONLY active, verified
+# project domains (GET /api/v1/public/domains/tls-check?domain=...). Unverified domains never get
+# certificates and are never served.
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://api:4000/api/v1/public/domains/tls-check
+	}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$WEB_DOMAIN}, www.{$WEB_DOMAIN} {
+	import common
+	reverse_proxy web:3000
+}
+
+{$CONSOLE_DOMAIN} {
+	import common
+	reverse_proxy console:3000
+}
+
+# Project microsites: platform subdomains and verified custom domains.
+https:// {
+	import common
+	tls {
+		on_demand
+	}
+	reverse_proxy web:3000
+}
