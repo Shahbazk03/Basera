@@ -111,3 +111,25 @@ describe('partial updates and query booleans', () => {
     expect(shared.propertyAttributesSchema.parse({ liftAvailable: undefined, powerBackup: null, waterSupply: '', societyName: 'Shalimar' })).toEqual({ societyName: 'Shalimar' });
   });
 });
+
+describe('database TLS settings (managed Postgres such as Supabase)', () => {
+  const { pgConnectionConfig } = require('../prisma/pg-adapter') as typeof import('../prisma/pg-adapter');
+
+  it('leaves local URLs untouched (no TLS)', () => {
+    const url = 'postgresql://u:p@localhost:5433/estate?schema=public';
+    expect(pgConnectionConfig(url)).toEqual({ connectionString: url });
+  });
+
+  it('turns sslmode=require into encrypted TLS (node-postgres would otherwise demand a public CA)', () => {
+    const cfg = pgConnectionConfig('postgresql://postgres.ref:pw@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require');
+    expect(cfg.ssl).toEqual({ rejectUnauthorized: false });
+    expect(cfg.connectionString).not.toContain('sslmode');
+  });
+
+  it('verifies the server certificate when the provider CA is given', () => {
+    const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
+    const cfg = pgConnectionConfig('postgresql://u:p@db.example.com:5432/postgres?sslmode=require', pem);
+    expect(cfg.ssl?.rejectUnauthorized).toBe(true);
+    expect(cfg.ssl?.ca).toContain('\nMIIB\n'); // escaped newlines from a single-line env var are restored
+  });
+});

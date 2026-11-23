@@ -29,8 +29,10 @@ async function bootstrap(): Promise<void> {
     SwaggerModule.setup('api/docs', app, () => SwaggerModule.createDocument(app, config), { jsonDocumentUrl: 'api/docs/openapi.json' });
   }
 
-  await app.listen(e.API_PORT);
-  logger.log(`API listening on :${e.API_PORT} (${e.APP_ENV})${swaggerEnabled ? ` — docs at /api/docs` : ''}`);
+  // Hosting platforms (Render, etc.) assign the port through PORT.
+  const port = Number(process.env.PORT) || e.API_PORT;
+  await app.listen(port);
+  logger.log(`API listening on :${port} (${e.APP_ENV})${swaggerEnabled ? ` — docs at /api/docs` : ''}`);
 }
 
 void bootstrap();

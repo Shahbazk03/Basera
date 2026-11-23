@@ -1,7 +1,7 @@
 import { Global, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '../generated/prisma/client';
 import { env } from '../config/env';
+import { createPgAdapter } from './pg-adapter';
 
 export type Tx = Prisma.TransactionClient;
 export type Db = PrismaClient | Tx;
@@ -12,7 +12,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   constructor() {
     super({
-      adapter: new PrismaPg({ connectionString: env().DATABASE_URL }),
+      adapter: createPgAdapter(env().DATABASE_URL, env().DATABASE_SSL_CA),
       log: [
         { emit: 'event', level: 'warn' },
         { emit: 'event', level: 'error' },

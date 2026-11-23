@@ -3,21 +3,14 @@
  * (platform subdomain or verified custom domain) to /site/<slug>/….
  */
 
-const API = (process.env.API_INTERNAL_URL ?? 'http://localhost:4000').replace(/\/$/, '');
-const ROOT = (process.env.PLATFORM_ROOT_DOMAIN ?? 'localhost').toLowerCase();
-const MAIN_HOSTS = new Set(
-  (process.env.PLATFORM_MAIN_HOSTS ?? 'localhost,127.0.0.1')
-    .split(',')
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean),
-);
+import { isMarketplaceHost, normalizeHost } from './hosts';
 
-export function isMarketplaceHost(host: string): boolean {
-  return !host || MAIN_HOSTS.has(host) || host === ROOT || host === `www.${ROOT}`;
-}
+const API = (process.env.API_INTERNAL_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+
+export { isMarketplaceHost };
 
 export function requestHost(headers: Headers): string {
-  return (headers.get('x-forwarded-host') ?? headers.get('host') ?? '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
+  return normalizeHost(headers.get('x-forwarded-host') ?? headers.get('host'));
 }
 
 export interface MicrositeRequest {

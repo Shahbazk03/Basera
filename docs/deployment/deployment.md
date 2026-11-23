@@ -1,5 +1,7 @@
 # Deployment
 
+> **Managed hosting:** step-by-step setup on Supabase (database + storage), Render (API, [`render.yaml`](../../render.yaml)) and Vercel (website + console) is in [render-vercel-supabase.md](render-vercel-supabase.md). This page describes the self-hosted Docker/Caddy alternative.
+
 ## Environments
 
 | Environment | `APP_ENV` | Purpose | Data |

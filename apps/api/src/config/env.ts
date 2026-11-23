@@ -29,6 +29,8 @@ const envSchema = z
     APP_ENV: z.enum(['local', 'development', 'staging', 'production', 'test']).default('local'),
     NODE_ENV: z.string().default('development'),
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+    /** PEM certificate of the database's CA (e.g. Supabase) — enables verified TLS. */
+    DATABASE_SSL_CA: optionalString,
     REDIS_URL: optionalString,
     API_PORT: z.coerce.number().int().default(4000),
     CORS_ORIGINS: z.string().default(''),

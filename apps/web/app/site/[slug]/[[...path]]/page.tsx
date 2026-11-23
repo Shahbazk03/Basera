@@ -5,6 +5,7 @@ import { notFound, permanentRedirect } from 'next/navigation';
 import { MapPin, ShieldCheck } from 'lucide-react';
 import type { ProjectDetail } from '@estate/shared';
 import { apiGet, apiGetOptional, getSettings, siteUrl } from '@/lib/api-server';
+import { isMarketplaceHost, normalizeHost } from '@/lib/hosts';
 import { ProjectPage, projectAddress } from '@/components/projects/project-page';
 import { ProjectCta } from '@/components/projects/project-cta';
 import { projectJsonLd } from '@/components/projects/json-ld';
@@ -15,14 +16,6 @@ export const revalidate = 30;
 type SP = Record<string, string | string[] | undefined>;
 type Props = { params: Promise<{ slug: string; path?: string[] }>; searchParams: Promise<SP> };
 
-// Same host classification as apps/web/proxy.ts.
-const ROOT = (process.env.PLATFORM_ROOT_DOMAIN ?? 'localhost').toLowerCase();
-const MAIN_HOSTS = new Set(
-  (process.env.PLATFORM_MAIN_HOSTS ?? 'localhost,127.0.0.1')
-    .split(',')
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean),
-);
 
 type FooterPages = ({ slug: string; title: string; footerGroup?: string | null } | { group: string; links: { slug: string; title: string }[] })[];
 
@@ -49,8 +42,8 @@ function previewParam(sp: SP): string | undefined {
 async function loadMicrosite({ params, searchParams }: Props): Promise<ProjectDetail> {
   const { slug, path } = await params;
   const h = await headers();
-  const host = (h.get('x-forwarded-host') ?? h.get('host') ?? '').trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
-  if (!host || MAIN_HOSTS.has(host) || host === ROOT || host === `www.${ROOT}`) permanentRedirect(`/projects/${encodeURIComponent(slug)}`);
+  const host = normalizeHost(h.get('x-forwarded-host') ?? h.get('host'));
+  if (isMarketplaceHost(host)) permanentRedirect(`/projects/${encodeURIComponent(slug)}`);
   if (path?.length) notFound();
   const mapped = await apiGet<{ projectSlug: string }>('/public/domains/resolve', { host }, { revalidate: 30 });
   if (mapped.projectSlug !== slug) notFound();

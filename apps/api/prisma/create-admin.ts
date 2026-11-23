@@ -3,12 +3,14 @@
  *   ADMIN_EMAIL=owner@brand.in ADMIN_NAME="Owner Name" ADMIN_PASSWORD='…' npm run admin:create -w @estate/api
  * Requires reference data (permissions/roles/platform organisation) — run `npm run db:seed` first
  * (in production that seeds reference data only).
+ * Safe to run on every start-up: an existing Super Admin is left untouched (their password is NOT reset)
+ * unless ADMIN_RESET_PASSWORD=true.
  */
-import { PrismaPg } from '@prisma/adapter-pg';
 import { hash } from '@node-rs/argon2';
 import { passwordSchema } from '@estate/shared';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { loadEnvFile } from '../src/config/env';
+import { createPgAdapter } from '../src/prisma/pg-adapter';
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -19,11 +21,16 @@ async function main(): Promise<void> {
   const strong = passwordSchema.safeParse(password);
   if (!strong.success) throw new Error(`ADMIN_PASSWORD is too weak: ${strong.error.issues[0].message}`);
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+  const prisma = new PrismaClient({ adapter: createPgAdapter(process.env.DATABASE_URL!) });
   try {
     const role = await prisma.role.findUnique({ where: { key: 'SUPER_ADMIN' } });
     const platform = await prisma.organization.findFirst({ where: { type: 'PLATFORM' } });
     if (!role || !platform) throw new Error('Reference data missing — run the seed first');
+    const current = await prisma.user.findUnique({ where: { email }, select: { id: true, userRoles: { where: { roleId: role.id, organizationId: null }, select: { id: true } } } });
+    if (current?.userRoles.length && process.env.ADMIN_RESET_PASSWORD !== 'true') {
+      console.log(`Super Admin ${email} already exists — left unchanged (set ADMIN_RESET_PASSWORD=true to reset the password).`);
+      return;
+    }
     const passwordHash = await hash(password, { memoryCost: 19456, timeCost: 2, parallelism: 1 });
     const user = await prisma.user.upsert({
       where: { email },

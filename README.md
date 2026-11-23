@@ -104,4 +104,4 @@ Integrations are optional. When credentials are missing the feature shows **Not 
 - [API conventions](docs/api/README.md)
 - Workflows: [listings](docs/workflows/listings.md) · [projects & domains](docs/workflows/projects-and-domains.md) · [enquiries & CRM](docs/workflows/crm.md) · [payroll](docs/workflows/payroll.md) · [commissions & finance](docs/workflows/finance.md)
 - [Security](docs/security/security.md)
-- [Deployment](docs/deployment/deployment.md) · [Backup & recovery](docs/deployment/backup-and-recovery.md)
+- [Deployment](docs/deployment/deployment.md) · **[Supabase + Render + Vercel guide](docs/deployment/render-vercel-supabase.md)** · [Backup & recovery](docs/deployment/backup-and-recovery.md)
