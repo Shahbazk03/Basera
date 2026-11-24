@@ -41,6 +41,16 @@ export function istBoundaries(now: Date = new Date()) {
 
 type Scope = 'ALL' | string[];
 
+/** One part of a dashboard: its sections, breakdowns and lists, in display order. */
+interface DashboardParts {
+  sections: DashboardSection[];
+  breakdowns: DashboardBreakdown[];
+  lists: DashboardList[];
+}
+const noParts = (): DashboardParts => ({ sections: [], breakdowns: [], lists: [] });
+/** The moment a dashboard is computed, so every part counts against the same "today". */
+type Clock = ReturnType<typeof istBoundaries> & { now: Date };
+
 const OPEN_STATUSES = OPEN_LEAD_STATUSES as unknown as Prisma.EnumLeadStatusFilter['in'];
 
 function orgIn(scope: Scope, field = 'organizationId'): Record<string, unknown> {
@@ -76,209 +86,308 @@ export class ReportsService {
 
   // ───────────────────────── Admin (platform back office) ─────────────────────────
 
+  /**
+   * The parts of the admin dashboard do not depend on each other, so all their queries run at the same
+   * time — a few round trips to the database instead of one after another for every part. The results
+   * are put together in a fixed order.
+   */
   private async adminDashboard(user: AuthUser) {
-    const { dayStart, dayEnd, monthStart, todayDate, monthStartDate } = istBoundaries();
-    const now = new Date();
-    const sections: DashboardSection[] = [];
-    const breakdowns: DashboardBreakdown[] = [];
-    const lists: DashboardList[] = [];
+    const clock: Clock = { ...istBoundaries(), now: new Date() };
+    const parts = await Promise.all([
+      this.adminMarketplace(user),
+      this.adminProjects(user),
+      this.adminCrm(user, clock),
+      this.adminPartners(user),
+      this.adminPeople(user, clock),
+      this.adminFinance(user, clock),
+    ]);
+    return {
+      sections: parts.flatMap((p) => p.sections),
+      breakdowns: parts.flatMap((p) => p.breakdowns),
+      lists: parts.flatMap((p) => p.lists),
+    };
+  }
 
-    // Marketplace
+  private async adminMarketplace(user: AuthUser): Promise<DashboardParts> {
+    const out = noParts();
     const propScope = this.scope(user, 'property.view_all', 'property.approve');
-    if (propScope) {
-      const approveScope = this.scope(user, 'property.approve');
-      const reportScope = this.scope(user, 'property.report.manage');
-      const where = { deletedAt: null, ...orgIn(propScope) };
-      const [live, pending, drafts, openReports] = await Promise.all([
-        this.prisma.property.count({ where: { ...where, status: 'PUBLISHED' } }),
-        approveScope ? this.prisma.property.count({ where: { deletedAt: null, ...orgIn(approveScope), status: 'PENDING_REVIEW' } }) : Promise.resolve(null),
-        this.prisma.property.count({ where: { ...where, status: 'DRAFT' } }),
-        reportScope ? this.prisma.propertyReport.count({ where: { status: 'OPEN', ...(reportScope === 'ALL' ? {} : { property: { organizationId: { in: reportScope } } }) } }) : Promise.resolve(null),
-      ]);
-      const metrics: DashboardMetric[] = [{ key: 'liveListings', label: 'Live listings', value: live, href: '/listings?status=PUBLISHED' }];
-      if (pending !== null) metrics.push({ key: 'pendingApprovals', label: 'Listings awaiting approval', value: pending, href: '/listings/reviews', tone: pending > 0 ? 'warning' : 'default' });
-      metrics.push({ key: 'draftListings', label: 'Draft listings', value: drafts, href: '/listings?status=DRAFT' });
-      if (openReports !== null) metrics.push({ key: 'openReports', label: 'Open listing reports', value: openReports, href: '/listings/reports', tone: openReports > 0 ? 'danger' : 'default' });
-      sections.push({ key: 'marketplace', title: 'Marketplace', metrics });
-      if (approveScope) {
-        const rows = await this.prisma.property.findMany({
-          where: { deletedAt: null, ...orgIn(approveScope), status: 'PENDING_REVIEW' },
-          orderBy: { submittedAt: 'asc' },
-          take: 5,
-          select: { id: true, title: true, referenceCode: true, submittedAt: true, organization: { select: { name: true } } },
-        });
-        lists.push({
-          key: 'pendingListings',
-          title: 'Oldest listings awaiting approval',
-          href: '/listings/reviews',
-          emptyText: 'No listings are waiting for review.',
-          items: rows.map((r) => ({ id: r.id, title: r.title, subtitle: `${r.referenceCode} · ${r.organization.name}`, meta: r.submittedAt?.toISOString() ?? null, href: `/listings/${r.id}` })),
-        });
-      }
-    }
-
-    // Projects & inventory
-    const projScope = this.scope(user, 'project.view_all');
-    if (projScope) {
-      const projWhere: Prisma.ProjectWhereInput = { deletedAt: null, status: { not: 'ARCHIVED' }, ...(projScope === 'ALL' ? {} : { OR: [{ organizationId: { in: projScope } }, { developerOrgId: { in: projScope } }] }) };
-      const reviewScope = this.scope(user, 'project.approve');
-      const [total, active, inReview, units] = await Promise.all([
-        this.prisma.project.count({ where: projWhere }),
-        this.prisma.project.count({ where: { ...projWhere, isPublished: true, reviewStatus: 'APPROVED', status: { in: SALES_PROJECT_STATUSES } } }),
-        reviewScope ? this.prisma.project.count({ where: { deletedAt: null, reviewStatus: 'PENDING_REVIEW', ...(reviewScope === 'ALL' ? {} : { organizationId: { in: reviewScope } }) } }) : Promise.resolve(null),
-        this.prisma.projectUnit.groupBy({ by: ['status'], where: { project: projWhere }, _count: { _all: true } }),
-      ]);
-      const u = Object.fromEntries(units.map((x) => [x.status, x._count._all])) as Record<string, number>;
-      const metrics: DashboardMetric[] = [
-        { key: 'projects', label: 'Projects', value: total, href: '/projects' },
-        { key: 'activeProjects', label: 'Projects live for sale', value: active, href: '/projects' },
-      ];
-      if (inReview !== null) metrics.push({ key: 'projectReviews', label: 'Projects awaiting approval', value: inReview, href: '/projects/reviews', tone: inReview > 0 ? 'warning' : 'default' });
-      sections.push({ key: 'projects', title: 'Projects', metrics });
-      sections.push({
-        key: 'inventory',
-        title: 'Project inventory',
-        metrics: [
-          { key: 'unitsAvailable', label: 'Units available', value: u.AVAILABLE ?? 0, tone: 'success' },
-          { key: 'unitsHeld', label: 'Reserved / on hold', value: (u.RESERVED ?? 0) + (u.ON_HOLD ?? 0), tone: 'warning' },
-          { key: 'unitsBooked', label: 'Units booked', value: u.BOOKED ?? 0 },
-          { key: 'unitsSold', label: 'Units sold', value: u.SOLD ?? 0 },
-        ],
+    if (!propScope) return out;
+    const approveScope = this.scope(user, 'property.approve');
+    const reportScope = this.scope(user, 'property.report.manage');
+    const where = { deletedAt: null, ...orgIn(propScope) };
+    const [live, pending, drafts, openReports, oldestPending] = await Promise.all([
+      this.prisma.property.count({ where: { ...where, status: 'PUBLISHED' } }),
+      approveScope ? this.prisma.property.count({ where: { deletedAt: null, ...orgIn(approveScope), status: 'PENDING_REVIEW' } }) : Promise.resolve(null),
+      this.prisma.property.count({ where: { ...where, status: 'DRAFT' } }),
+      reportScope ? this.prisma.propertyReport.count({ where: { status: 'OPEN', ...(reportScope === 'ALL' ? {} : { property: { organizationId: { in: reportScope } } }) } }) : Promise.resolve(null),
+      approveScope
+        ? this.prisma.property.findMany({
+            where: { deletedAt: null, ...orgIn(approveScope), status: 'PENDING_REVIEW' },
+            orderBy: { submittedAt: 'asc' },
+            take: 5,
+            select: { id: true, title: true, referenceCode: true, submittedAt: true, organization: { select: { name: true } } },
+          })
+        : Promise.resolve(null),
+    ]);
+    const metrics: DashboardMetric[] = [{ key: 'liveListings', label: 'Live listings', value: live, href: '/listings?status=PUBLISHED' }];
+    if (pending !== null) metrics.push({ key: 'pendingApprovals', label: 'Listings awaiting approval', value: pending, href: '/listings/reviews', tone: pending > 0 ? 'warning' : 'default' });
+    metrics.push({ key: 'draftListings', label: 'Draft listings', value: drafts, href: '/listings?status=DRAFT' });
+    if (openReports !== null) metrics.push({ key: 'openReports', label: 'Open listing reports', value: openReports, href: '/listings/reports', tone: openReports > 0 ? 'danger' : 'default' });
+    out.sections.push({ key: 'marketplace', title: 'Marketplace', metrics });
+    if (oldestPending) {
+      out.lists.push({
+        key: 'pendingListings',
+        title: 'Oldest listings awaiting approval',
+        href: '/listings/reviews',
+        emptyText: 'No listings are waiting for review.',
+        items: oldestPending.map((r) => ({ id: r.id, title: r.title, subtitle: `${r.referenceCode} · ${r.organization.name}`, meta: r.submittedAt?.toISOString() ?? null, href: `/listings/${r.id}` })),
       });
     }
+    return out;
+  }
 
-    // CRM
+  private async adminProjects(user: AuthUser): Promise<DashboardParts> {
+    const out = noParts();
+    const projScope = this.scope(user, 'project.view_all');
+    if (!projScope) return out;
+    const projWhere: Prisma.ProjectWhereInput = { deletedAt: null, status: { not: 'ARCHIVED' }, ...(projScope === 'ALL' ? {} : { OR: [{ organizationId: { in: projScope } }, { developerOrgId: { in: projScope } }] }) };
+    const reviewScope = this.scope(user, 'project.approve');
+    const [total, active, inReview, units] = await Promise.all([
+      this.prisma.project.count({ where: projWhere }),
+      this.prisma.project.count({ where: { ...projWhere, isPublished: true, reviewStatus: 'APPROVED', status: { in: SALES_PROJECT_STATUSES } } }),
+      reviewScope ? this.prisma.project.count({ where: { deletedAt: null, reviewStatus: 'PENDING_REVIEW', ...(reviewScope === 'ALL' ? {} : { organizationId: { in: reviewScope } }) } }) : Promise.resolve(null),
+      this.prisma.projectUnit.groupBy({ by: ['status'], where: { project: projWhere }, _count: { _all: true } }),
+    ]);
+    const u = Object.fromEntries(units.map((x) => [x.status, x._count._all])) as Record<string, number>;
+    const metrics: DashboardMetric[] = [
+      { key: 'projects', label: 'Projects', value: total, href: '/projects' },
+      { key: 'activeProjects', label: 'Projects live for sale', value: active, href: '/projects' },
+    ];
+    if (inReview !== null) metrics.push({ key: 'projectReviews', label: 'Projects awaiting approval', value: inReview, href: '/projects/reviews', tone: inReview > 0 ? 'warning' : 'default' });
+    out.sections.push({ key: 'projects', title: 'Projects', metrics });
+    out.sections.push({
+      key: 'inventory',
+      title: 'Project inventory',
+      metrics: [
+        { key: 'unitsAvailable', label: 'Units available', value: u.AVAILABLE ?? 0, tone: 'success' },
+        { key: 'unitsHeld', label: 'Reserved / on hold', value: (u.RESERVED ?? 0) + (u.ON_HOLD ?? 0), tone: 'warning' },
+        { key: 'unitsBooked', label: 'Units booked', value: u.BOOKED ?? 0 },
+        { key: 'unitsSold', label: 'Units sold', value: u.SOLD ?? 0 },
+      ],
+    });
+    return out;
+  }
+
+  private async adminCrm(user: AuthUser, clock: Clock): Promise<DashboardParts> {
+    const out = noParts();
     const enquiryScope = this.scope(user, 'enquiry.view');
     const leadScope = this.scope(user, 'lead.view_all');
-    if (enquiryScope || leadScope) {
-      const metrics: DashboardMetric[] = [];
-      if (enquiryScope) {
-        const [today, week] = await Promise.all([
-          this.prisma.enquiry.count({ where: { ...orgIn(enquiryScope), status: { not: 'SPAM' }, createdAt: { gte: dayStart, lt: dayEnd } } }),
-          this.prisma.enquiry.count({ where: { ...orgIn(enquiryScope), status: { not: 'SPAM' }, createdAt: { gte: new Date(dayStart.getTime() - 6 * DAY) } } }),
-        ]);
-        metrics.push({ key: 'enquiriesToday', label: 'New enquiries today', value: today, href: '/crm/enquiries' }, { key: 'enquiries7d', label: 'Enquiries (last 7 days)', value: week, href: '/crm/enquiries' });
-      }
-      if (leadScope) {
-        const leadWhere: Prisma.LeadWhereInput = { deletedAt: null, isDuplicate: false, ...orgIn(leadScope) };
-        const [unassigned, dueToday, overdue, visits, pipeline] = await Promise.all([
-          this.prisma.lead.count({ where: { ...leadWhere, assignedToId: null, status: { in: OPEN_STATUSES }, intakeStatus: 'ACCEPTED' } }),
-          this.prisma.leadFollowUp.count({ where: { status: 'PENDING', dueAt: { gte: dayStart, lt: dayEnd }, lead: leadWhere } }),
-          this.prisma.leadFollowUp.count({ where: { status: 'PENDING', dueAt: { lt: dayStart }, lead: leadWhere } }),
-          this.prisma.siteVisit.count({ where: { status: { in: ['REQUESTED', 'SCHEDULED', 'CONFIRMED'] }, scheduledAt: { gte: now, lt: new Date(now.getTime() + 7 * DAY) }, lead: leadWhere } }),
-          this.prisma.lead.groupBy({ by: ['status'], where: { ...leadWhere, status: { in: OPEN_STATUSES } }, _count: { _all: true } }),
-        ]);
-        metrics.push(
-          { key: 'unassignedLeads', label: 'Unassigned leads', value: unassigned, href: '/crm/leads?unassigned=true', tone: unassigned > 0 ? 'warning' : 'default' },
-          { key: 'followUpsToday', label: 'Follow-ups due today', value: dueToday, href: '/crm/follow-ups' },
-          { key: 'followUpsOverdue', label: 'Overdue follow-ups', value: overdue, href: '/crm/follow-ups', tone: overdue > 0 ? 'danger' : 'default' },
-          { key: 'siteVisits7d', label: 'Site visits (next 7 days)', value: visits, href: '/crm/site-visits' },
-        );
-        breakdowns.push({
-          key: 'pipeline',
-          title: 'Open pipeline by stage',
-          href: '/crm/leads',
-          items: OPEN_LEAD_STATUSES.map((s) => ({ key: s, label: enumLabel(s), value: pipeline.find((p) => p.status === s)?._count._all ?? 0 })),
-        });
-        const upcoming = await this.prisma.siteVisit.findMany({
-          where: { status: { in: ['REQUESTED', 'SCHEDULED', 'CONFIRMED'] }, scheduledAt: { gte: now }, lead: leadWhere },
-          orderBy: { scheduledAt: 'asc' },
-          take: 5,
-          select: { id: true, leadId: true, scheduledAt: true, status: true, customer: { select: { fullName: true } }, project: { select: { name: true } }, property: { select: { title: true } }, assignedTo: { select: { fullName: true } } },
-        });
-        lists.push({
-          key: 'upcomingVisits',
-          title: 'Upcoming site visits',
-          href: '/crm/site-visits',
-          emptyText: 'No site visits scheduled.',
-          items: upcoming.map((v) => ({ id: v.id, title: `${v.customer.fullName} — ${v.project?.name ?? v.property?.title ?? 'Site visit'}`, subtitle: v.assignedTo ? `With ${v.assignedTo.fullName}` : 'Not assigned', meta: v.scheduledAt.toISOString(), status: v.status, href: `/crm/leads/${v.leadId}` })),
-        });
-      }
-      if (enquiryScope) {
-        const recent = await this.prisma.enquiry.findMany({
-          where: { ...orgIn(enquiryScope), status: { not: 'SPAM' } },
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: { id: true, referenceNo: true, name: true, type: true, createdAt: true, leadId: true, status: true, property: { select: { title: true } }, project: { select: { name: true } } },
-        });
-        lists.push({
-          key: 'recentEnquiries',
-          title: 'Latest enquiries',
-          href: '/crm/enquiries',
-          emptyText: 'No enquiries yet.',
-          items: recent.map((e) => ({ id: e.id, title: `${e.name} — ${e.property?.title ?? e.project?.name ?? 'General enquiry'}`, subtitle: `${e.referenceNo} · ${enumLabel(e.type)}`, meta: e.createdAt.toISOString(), status: e.status, href: e.leadId ? `/crm/leads/${e.leadId}` : '/crm/enquiries' })),
-        });
-      }
-      const dealScope = this.scope(user, 'deal.view');
-      if (dealScope) {
-        const booked = await this.prisma.deal.aggregate({ where: { ...orgIn(dealScope), status: { in: ['BOOKED', 'AGREEMENT_SIGNED', 'CLOSED_WON'] }, OR: [{ bookingDate: { gte: monthStartDate } }, { bookingDate: null, createdAt: { gte: monthStart } }] }, _count: { _all: true }, _sum: { dealValue: true } });
-        metrics.push({ key: 'dealsThisMonth', label: 'Bookings this month', value: booked._count._all, href: '/crm/deals' }, { key: 'dealValueThisMonth', label: 'Booked value this month', value: Number(booked._sum.dealValue ?? 0), format: 'currency', href: '/crm/deals' });
-      }
-      sections.push({ key: 'crm', title: 'Sales & CRM', metrics });
+    if (!enquiryScope && !leadScope) return out;
+    const { dayStart, dayEnd, monthStart, monthStartDate, now } = clock;
+    const dealScope = this.scope(user, 'deal.view');
+    const leadWhere: Prisma.LeadWhereInput | null = leadScope ? { deletedAt: null, isDuplicate: false, ...orgIn(leadScope) } : null;
+    const [enquiries, leads, booked] = await Promise.all([
+      enquiryScope
+        ? Promise.all([
+            this.prisma.enquiry.count({ where: { ...orgIn(enquiryScope), status: { not: 'SPAM' }, createdAt: { gte: dayStart, lt: dayEnd } } }),
+            this.prisma.enquiry.count({ where: { ...orgIn(enquiryScope), status: { not: 'SPAM' }, createdAt: { gte: new Date(dayStart.getTime() - 6 * DAY) } } }),
+            this.prisma.enquiry
+              .findMany({
+                where: { ...orgIn(enquiryScope), status: { not: 'SPAM' } },
+                orderBy: { createdAt: 'desc' },
+                take: 5,
+                select: { id: true, referenceNo: true, name: true, type: true, createdAt: true, leadId: true, status: true, propertyId: true, projectId: true },
+              })
+              .then(async (rows) => ({ rows, names: await this.linkedNames({ property: rows.map((e) => e.propertyId), project: rows.map((e) => e.projectId) }) })),
+          ])
+        : null,
+      leadWhere
+        ? Promise.all([
+            this.prisma.lead.count({ where: { ...leadWhere, assignedToId: null, status: { in: OPEN_STATUSES }, intakeStatus: 'ACCEPTED' } }),
+            this.prisma.leadFollowUp.count({ where: { status: 'PENDING', dueAt: { gte: dayStart, lt: dayEnd }, lead: leadWhere } }),
+            this.prisma.leadFollowUp.count({ where: { status: 'PENDING', dueAt: { lt: dayStart }, lead: leadWhere } }),
+            this.prisma.siteVisit.count({ where: { status: { in: ['REQUESTED', 'SCHEDULED', 'CONFIRMED'] }, scheduledAt: { gte: now, lt: new Date(now.getTime() + 7 * DAY) }, lead: leadWhere } }),
+            this.prisma.lead.groupBy({ by: ['status'], where: { ...leadWhere, status: { in: OPEN_STATUSES } }, _count: { _all: true } }),
+            this.prisma.siteVisit
+              .findMany({
+                where: { status: { in: ['REQUESTED', 'SCHEDULED', 'CONFIRMED'] }, scheduledAt: { gte: now }, lead: leadWhere },
+                orderBy: { scheduledAt: 'asc' },
+                take: 5,
+                select: { id: true, leadId: true, scheduledAt: true, status: true, customerId: true, projectId: true, propertyId: true, assignedToId: true },
+              })
+              .then(async (rows) => ({
+                rows,
+                names: await this.linkedNames({ customer: rows.map((v) => v.customerId), project: rows.map((v) => v.projectId), property: rows.map((v) => v.propertyId), user: rows.map((v) => v.assignedToId) }),
+              })),
+          ])
+        : null,
+      dealScope
+        ? this.prisma.deal.aggregate({ where: { ...orgIn(dealScope), status: { in: ['BOOKED', 'AGREEMENT_SIGNED', 'CLOSED_WON'] }, OR: [{ bookingDate: { gte: monthStartDate } }, { bookingDate: null, createdAt: { gte: monthStart } }] }, _count: { _all: true }, _sum: { dealValue: true } })
+        : null,
+    ]);
+    const metrics: DashboardMetric[] = [];
+    if (enquiries) {
+      const [today, week] = enquiries;
+      metrics.push({ key: 'enquiriesToday', label: 'New enquiries today', value: today, href: '/crm/enquiries' }, { key: 'enquiries7d', label: 'Enquiries (last 7 days)', value: week, href: '/crm/enquiries' });
     }
-
-    // Partners
-    const brokerVisible = user.hasGlobal('broker.view') || user.hasGlobal('broker.verify');
-    const devVisible = user.hasGlobal('developer.view') || user.hasGlobal('developer.verify');
-    if (brokerVisible || devVisible) {
-      const groups = await this.prisma.organization.groupBy({ by: ['type', 'status'], where: { deletedAt: null, type: { in: ['BROKERAGE', 'DEVELOPER', 'INDIVIDUAL_OWNER'] } }, _count: { _all: true } });
-      const c = (type: string, status: string) => groups.find((g) => g.type === type && g.status === status)?._count._all ?? 0;
-      const metrics: DashboardMetric[] = [];
-      if (brokerVisible) metrics.push({ key: 'brokers', label: 'Verified brokerages', value: c('BROKERAGE', 'ACTIVE'), href: '/partners?type=BROKERAGE' }, { key: 'brokersPending', label: 'Brokerages awaiting verification', value: c('BROKERAGE', 'PENDING') + c('INDIVIDUAL_OWNER', 'PENDING'), href: '/partners?status=PENDING', tone: c('BROKERAGE', 'PENDING') + c('INDIVIDUAL_OWNER', 'PENDING') > 0 ? 'warning' : 'default' });
-      if (devVisible) metrics.push({ key: 'developers', label: 'Verified developers', value: c('DEVELOPER', 'ACTIVE'), href: '/partners?type=DEVELOPER' }, { key: 'developersPending', label: 'Developers awaiting verification', value: c('DEVELOPER', 'PENDING'), href: '/partners?type=DEVELOPER&status=PENDING', tone: c('DEVELOPER', 'PENDING') > 0 ? 'warning' : 'default' });
-      sections.push({ key: 'partners', title: 'Partners', metrics });
-      const types = [...(brokerVisible ? (['BROKERAGE', 'INDIVIDUAL_OWNER', 'PARTNER'] as const) : []), ...(devVisible ? (['DEVELOPER'] as const) : [])];
-      const pending = await this.prisma.organization.findMany({ where: { deletedAt: null, status: 'PENDING', type: { in: [...types] } }, orderBy: { createdAt: 'asc' }, take: 5, select: { id: true, name: true, type: true, createdAt: true } });
-      lists.push({ key: 'pendingPartners', title: 'Partners awaiting verification', href: '/partners?status=PENDING', emptyText: 'No partner is waiting for verification.', items: pending.map((p) => ({ id: p.id, title: p.name, subtitle: enumLabel(p.type), meta: p.createdAt.toISOString(), href: `/partners/${p.id}` })) });
-    }
-
-    // People
-    const platformOrg = user.platformOrganizationId;
-    if (platformOrg && user.can('employee.view', platformOrg)) {
-      const [active, present, onLeave] = await Promise.all([
-        this.prisma.employee.count({ where: { organizationId: platformOrg, deletedAt: null, employmentStatus: { in: ['ACTIVE', 'PROBATION', 'ON_NOTICE'] } } }),
-        this.prisma.attendanceRecord.count({ where: { date: todayDate, status: { in: ['PRESENT', 'HALF_DAY'] }, employee: { organizationId: platformOrg } } }),
-        this.prisma.leaveRequest.count({ where: { status: 'APPROVED', startDate: { lte: todayDate }, endDate: { gte: todayDate }, employee: { organizationId: platformOrg } } }),
-      ]);
-      sections.push({
-        key: 'people',
-        title: 'People',
-        metrics: [
-          { key: 'employees', label: 'Employees', value: active, href: '/hr/employees' },
-          { key: 'presentToday', label: 'Checked in today', value: present, href: '/hr/attendance' },
-          { key: 'onLeaveToday', label: 'On leave today', value: onLeave, href: '/hr/leave' },
-        ],
+    if (leads) {
+      const [unassigned, dueToday, overdue, visits, pipeline, upcoming] = leads;
+      metrics.push(
+        { key: 'unassignedLeads', label: 'Unassigned leads', value: unassigned, href: '/crm/leads?unassigned=true', tone: unassigned > 0 ? 'warning' : 'default' },
+        { key: 'followUpsToday', label: 'Follow-ups due today', value: dueToday, href: '/crm/follow-ups' },
+        { key: 'followUpsOverdue', label: 'Overdue follow-ups', value: overdue, href: '/crm/follow-ups', tone: overdue > 0 ? 'danger' : 'default' },
+        { key: 'siteVisits7d', label: 'Site visits (next 7 days)', value: visits, href: '/crm/site-visits' },
+      );
+      out.breakdowns.push({
+        key: 'pipeline',
+        title: 'Open pipeline by stage',
+        href: '/crm/leads',
+        items: OPEN_LEAD_STATUSES.map((s) => ({ key: s, label: enumLabel(s), value: pipeline.find((p) => p.status === s)?._count._all ?? 0 })),
+      });
+      out.lists.push({
+        key: 'upcomingVisits',
+        title: 'Upcoming site visits',
+        href: '/crm/site-visits',
+        emptyText: 'No site visits scheduled.',
+        items: upcoming.rows.map((v) => {
+          const { names } = upcoming;
+          const assignee = names.user(v.assignedToId);
+          return {
+            id: v.id,
+            title: `${names.customer(v.customerId) ?? 'Customer'} — ${names.project(v.projectId) ?? names.property(v.propertyId) ?? 'Site visit'}`,
+            subtitle: assignee !== undefined ? `With ${assignee}` : 'Not assigned',
+            meta: v.scheduledAt.toISOString(),
+            status: v.status,
+            href: `/crm/leads/${v.leadId}`,
+          };
+        }),
       });
     }
-
-    // Finance
-    if (platformOrg && (user.can('finance.view', platformOrg) || user.can('commission.view', platformOrg))) {
-      const metrics: DashboardMetric[] = [];
-      if (user.can('finance.view', platformOrg)) {
-        const [receipts, outstanding, pendingExpenses] = await Promise.all([
-          this.prisma.financeTransaction.aggregate({ where: { organizationId: platformOrg, type: 'INVOICE_RECEIPT', txnDate: { gte: monthStartDate } }, _sum: { amount: true } }),
-          this.prisma.invoice.aggregate({ where: { organizationId: platformOrg, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } }, _sum: { total: true, amountPaid: true } }),
-          this.prisma.expense.count({ where: { organizationId: platformOrg, status: 'PENDING' } }),
-        ]);
-        metrics.push(
-          { key: 'revenueMonth', label: 'Revenue received this month', value: Number(receipts._sum.amount ?? 0), format: 'currency', href: '/finance/reports', hint: 'Invoice receipts' },
-          { key: 'invoicesOutstanding', label: 'Invoices outstanding', value: Number(outstanding._sum.total ?? 0) - Number(outstanding._sum.amountPaid ?? 0), format: 'currency', href: '/finance/invoices' },
-          { key: 'expensesPending', label: 'Expenses awaiting approval', value: pendingExpenses, href: '/finance/expenses?status=PENDING', tone: pendingExpenses > 0 ? 'warning' : 'default' },
-        );
-      }
-      if (user.can('commission.view', platformOrg)) {
-        const [payable, toApprove] = await Promise.all([
-          this.prisma.commissionRecord.aggregate({ where: { organizationId: platformOrg, status: { in: ['APPROVED', 'PAYABLE'] } }, _sum: { amount: true, amountPaid: true } }),
-          this.prisma.commissionRecord.count({ where: { organizationId: platformOrg, status: 'PENDING_APPROVAL' } }),
-        ]);
-        metrics.push(
-          { key: 'commissionsPayable', label: 'Commissions approved, unpaid', value: Number(payable._sum.amount ?? 0) - Number(payable._sum.amountPaid ?? 0), format: 'currency', href: '/commissions' },
-          { key: 'commissionsToApprove', label: 'Commissions awaiting approval', value: toApprove, href: '/commissions?status=PENDING_APPROVAL', tone: toApprove > 0 ? 'warning' : 'default' },
-        );
-      }
-      sections.push({ key: 'finance', title: 'Finance', metrics });
+    if (enquiries) {
+      const { rows, names } = enquiries[2];
+      out.lists.push({
+        key: 'recentEnquiries',
+        title: 'Latest enquiries',
+        href: '/crm/enquiries',
+        emptyText: 'No enquiries yet.',
+        items: rows.map((e) => ({ id: e.id, title: `${e.name} — ${names.property(e.propertyId) ?? names.project(e.projectId) ?? 'General enquiry'}`, subtitle: `${e.referenceNo} · ${enumLabel(e.type)}`, meta: e.createdAt.toISOString(), status: e.status, href: e.leadId ? `/crm/leads/${e.leadId}` : '/crm/enquiries' })),
+      });
     }
-    return { sections, breakdowns, lists };
+    if (booked) {
+      metrics.push({ key: 'dealsThisMonth', label: 'Bookings this month', value: booked._count._all, href: '/crm/deals' }, { key: 'dealValueThisMonth', label: 'Booked value this month', value: Number(booked._sum.dealValue ?? 0), format: 'currency', href: '/crm/deals' });
+    }
+    out.sections.push({ key: 'crm', title: 'Sales & CRM', metrics });
+    return out;
+  }
+
+  /**
+   * Names of the records a dashboard list links to, all looked up at the same time. (Selecting the
+   * linked records through Prisma's MongoDB connector loads them one relation after another — a
+   * database round trip each.)
+   */
+  private async linkedNames(ids: { customer?: (string | null)[]; project?: (string | null)[]; property?: (string | null)[]; user?: (string | null)[] }) {
+    const unique = (list: (string | null)[] = []) => [...new Set(list.filter((id): id is string => !!id))];
+    const [customerIds, projectIds, propertyIds, userIds] = [unique(ids.customer), unique(ids.project), unique(ids.property), unique(ids.user)];
+    const [customers, projects, properties, users] = await Promise.all([
+      customerIds.length ? this.prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, fullName: true } }) : [],
+      projectIds.length ? this.prisma.project.findMany({ where: { id: { in: projectIds } }, select: { id: true, name: true } }) : [],
+      propertyIds.length ? this.prisma.property.findMany({ where: { id: { in: propertyIds } }, select: { id: true, title: true } }) : [],
+      userIds.length ? this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, fullName: true } }) : [],
+    ]);
+    const lookup = (entries: [string, string][]) => {
+      const map = new Map(entries);
+      return (id: string | null) => (id ? map.get(id) : undefined);
+    };
+    return {
+      customer: lookup(customers.map((c) => [c.id, c.fullName])),
+      project: lookup(projects.map((p) => [p.id, p.name])),
+      property: lookup(properties.map((p) => [p.id, p.title])),
+      user: lookup(users.map((u) => [u.id, u.fullName])),
+    };
+  }
+
+  private async adminPartners(user: AuthUser): Promise<DashboardParts> {
+    const out = noParts();
+    const brokerVisible = user.hasGlobal('broker.view') || user.hasGlobal('broker.verify');
+    const devVisible = user.hasGlobal('developer.view') || user.hasGlobal('developer.verify');
+    if (!brokerVisible && !devVisible) return out;
+    const types = [...(brokerVisible ? (['BROKERAGE', 'INDIVIDUAL_OWNER', 'PARTNER'] as const) : []), ...(devVisible ? (['DEVELOPER'] as const) : [])];
+    const [groups, pending] = await Promise.all([
+      this.prisma.organization.groupBy({ by: ['type', 'status'], where: { deletedAt: null, type: { in: ['BROKERAGE', 'DEVELOPER', 'INDIVIDUAL_OWNER'] } }, _count: { _all: true } }),
+      this.prisma.organization.findMany({ where: { deletedAt: null, status: 'PENDING', type: { in: [...types] } }, orderBy: { createdAt: 'asc' }, take: 5, select: { id: true, name: true, type: true, createdAt: true } }),
+    ]);
+    const c = (type: string, status: string) => groups.find((g) => g.type === type && g.status === status)?._count._all ?? 0;
+    const metrics: DashboardMetric[] = [];
+    if (brokerVisible) metrics.push({ key: 'brokers', label: 'Verified brokerages', value: c('BROKERAGE', 'ACTIVE'), href: '/partners?type=BROKERAGE' }, { key: 'brokersPending', label: 'Brokerages awaiting verification', value: c('BROKERAGE', 'PENDING') + c('INDIVIDUAL_OWNER', 'PENDING'), href: '/partners?status=PENDING', tone: c('BROKERAGE', 'PENDING') + c('INDIVIDUAL_OWNER', 'PENDING') > 0 ? 'warning' : 'default' });
+    if (devVisible) metrics.push({ key: 'developers', label: 'Verified developers', value: c('DEVELOPER', 'ACTIVE'), href: '/partners?type=DEVELOPER' }, { key: 'developersPending', label: 'Developers awaiting verification', value: c('DEVELOPER', 'PENDING'), href: '/partners?type=DEVELOPER&status=PENDING', tone: c('DEVELOPER', 'PENDING') > 0 ? 'warning' : 'default' });
+    out.sections.push({ key: 'partners', title: 'Partners', metrics });
+    out.lists.push({ key: 'pendingPartners', title: 'Partners awaiting verification', href: '/partners?status=PENDING', emptyText: 'No partner is waiting for verification.', items: pending.map((p) => ({ id: p.id, title: p.name, subtitle: enumLabel(p.type), meta: p.createdAt.toISOString(), href: `/partners/${p.id}` })) });
+    return out;
+  }
+
+  private async adminPeople(user: AuthUser, clock: Clock): Promise<DashboardParts> {
+    const out = noParts();
+    const platformOrg = user.platformOrganizationId;
+    if (!platformOrg || !user.can('employee.view', platformOrg)) return out;
+    const { todayDate } = clock;
+    const [active, present, onLeave] = await Promise.all([
+      this.prisma.employee.count({ where: { organizationId: platformOrg, deletedAt: null, employmentStatus: { in: ['ACTIVE', 'PROBATION', 'ON_NOTICE'] } } }),
+      this.prisma.attendanceRecord.count({ where: { date: todayDate, status: { in: ['PRESENT', 'HALF_DAY'] }, employee: { organizationId: platformOrg } } }),
+      this.prisma.leaveRequest.count({ where: { status: 'APPROVED', startDate: { lte: todayDate }, endDate: { gte: todayDate }, employee: { organizationId: platformOrg } } }),
+    ]);
+    out.sections.push({
+      key: 'people',
+      title: 'People',
+      metrics: [
+        { key: 'employees', label: 'Employees', value: active, href: '/hr/employees' },
+        { key: 'presentToday', label: 'Checked in today', value: present, href: '/hr/attendance' },
+        { key: 'onLeaveToday', label: 'On leave today', value: onLeave, href: '/hr/leave' },
+      ],
+    });
+    return out;
+  }
+
+  private async adminFinance(user: AuthUser, clock: Clock): Promise<DashboardParts> {
+    const out = noParts();
+    const platformOrg = user.platformOrganizationId;
+    if (!platformOrg) return out;
+    const financeVisible = user.can('finance.view', platformOrg);
+    const commissionVisible = user.can('commission.view', platformOrg);
+    if (!financeVisible && !commissionVisible) return out;
+    const { monthStartDate } = clock;
+    const [finance, commissions] = await Promise.all([
+      financeVisible
+        ? Promise.all([
+            this.prisma.financeTransaction.aggregate({ where: { organizationId: platformOrg, type: 'INVOICE_RECEIPT', txnDate: { gte: monthStartDate } }, _sum: { amount: true } }),
+            this.prisma.invoice.aggregate({ where: { organizationId: platformOrg, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } }, _sum: { total: true, amountPaid: true } }),
+            this.prisma.expense.count({ where: { organizationId: platformOrg, status: 'PENDING' } }),
+          ])
+        : null,
+      commissionVisible
+        ? Promise.all([
+            this.prisma.commissionRecord.aggregate({ where: { organizationId: platformOrg, status: { in: ['APPROVED', 'PAYABLE'] } }, _sum: { amount: true, amountPaid: true } }),
+            this.prisma.commissionRecord.count({ where: { organizationId: platformOrg, status: 'PENDING_APPROVAL' } }),
+          ])
+        : null,
+    ]);
+    const metrics: DashboardMetric[] = [];
+    if (finance) {
+      const [receipts, outstanding, pendingExpenses] = finance;
+      metrics.push(
+        { key: 'revenueMonth', label: 'Revenue received this month', value: Number(receipts._sum.amount ?? 0), format: 'currency', href: '/finance/reports', hint: 'Invoice receipts' },
+        { key: 'invoicesOutstanding', label: 'Invoices outstanding', value: Number(outstanding._sum.total ?? 0) - Number(outstanding._sum.amountPaid ?? 0), format: 'currency', href: '/finance/invoices' },
+        { key: 'expensesPending', label: 'Expenses awaiting approval', value: pendingExpenses, href: '/finance/expenses?status=PENDING', tone: pendingExpenses > 0 ? 'warning' : 'default' },
+      );
+    }
+    if (commissions) {
+      const [payable, toApprove] = commissions;
+      metrics.push(
+        { key: 'commissionsPayable', label: 'Commissions approved, unpaid', value: Number(payable._sum.amount ?? 0) - Number(payable._sum.amountPaid ?? 0), format: 'currency', href: '/commissions' },
+        { key: 'commissionsToApprove', label: 'Commissions awaiting approval', value: toApprove, href: '/commissions?status=PENDING_APPROVAL', tone: toApprove > 0 ? 'warning' : 'default' },
+      );
+    }
+    out.sections.push({ key: 'finance', title: 'Finance', metrics });
+    return out;
   }
 
   // ───────────────────────── Staff (self) ─────────────────────────

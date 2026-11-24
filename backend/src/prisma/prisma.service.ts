@@ -13,10 +13,33 @@ const logger = new Logger('Prisma');
 /** MongoDB's default limit for a transaction is 60 s; job transactions stay below it. */
 const JOB_TRANSACTION_TIMEOUT_MS = 55_000;
 
+/**
+ * Connections kept open and ready. Opening one costs several network round trips (TLS and sign-in) —
+ * about half a second when the database is far away — which a page would otherwise wait for whenever a
+ * burst of parallel queries (e.g. the admin dashboard's) needs more connections than are open.
+ */
+const POOL_DEFAULTS: [string, string][] = [
+  ['minPoolSize', '30'],
+  ['maxPoolSize', '40'],
+  ['maxConnecting', '10'],
+];
+
+/** Adds the pool settings DATABASE_URL does not set itself (settings in the URL always win). */
+export function withConnectionPool(url: string): string {
+  const missing = POOL_DEFAULTS.filter(([name]) => !new RegExp(`[?&]${name}=`, 'i').test(url));
+  if (!missing.length) return url;
+  const options = missing.map(([name, value]) => `${name}=${value}`).join('&');
+  if (url.includes('?')) return `${url}${url.endsWith('?') || url.endsWith('&') ? '' : '&'}${options}`;
+  const hasPath = url.replace(/^mongodb(\+srv)?:\/\//, '').includes('/');
+  return `${url}${hasPath ? '' : '/'}?${options}`;
+}
+
 @Injectable()
 export class PrismaService extends DbClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
-    super(env().DATABASE_URL, {
+    const e = env();
+    // Tests open and close many app instances against a local database: no standing pool there.
+    super(e.APP_ENV === 'test' ? e.DATABASE_URL : withConnectionPool(e.DATABASE_URL), {
       log: [
         { emit: 'event', level: 'warn' },
         { emit: 'event', level: 'error' },
