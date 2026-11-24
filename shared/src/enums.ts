@@ -1,6 +1,6 @@
 /**
  * Enum values shared by the API and every frontend.
- * They mirror the Prisma enums in apps/api/prisma/schema.prisma — a unit test in the API
+ * They mirror the Prisma enums in backend/prisma/schema.prisma — a unit test in the API
  * (enum-parity.spec.ts) fails if the two drift apart.
  */
 

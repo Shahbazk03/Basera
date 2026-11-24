@@ -10,12 +10,12 @@ ENV NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false
 
 FROM base AS deps
 COPY package.json package-lock.json ./
-COPY apps/api/package.json apps/api/
-COPY apps/web/package.json apps/web/
-COPY apps/console/package.json apps/console/
-COPY packages/shared/package.json packages/shared/
-COPY packages/ui/package.json packages/ui/
-COPY packages/api-client/package.json packages/api-client/
+COPY backend/package.json backend/
+COPY frontend/web/package.json frontend/web/
+COPY frontend/console/package.json frontend/console/
+COPY shared/package.json shared/
+COPY frontend/packages/ui/package.json frontend/packages/ui/
+COPY frontend/packages/api-client/package.json frontend/packages/api-client/
 RUN npm ci --no-audit --no-fund --ignore-scripts
 
 FROM deps AS build
@@ -31,18 +31,19 @@ ENV API_INTERNAL_URL=$API_INTERNAL_URL WEB_PUBLIC_URL=$WEB_PUBLIC_URL CONSOLE_PU
     NEXT_PUBLIC_GOOGLE_MAPS_EMBED_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_EMBED_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
     S3_PUBLIC_BASE_URL=$S3_PUBLIC_BASE_URL NEXT_OUTPUT=standalone
 COPY tsconfig.base.json ./
-COPY packages packages
-COPY apps/${APP} apps/${APP}
+COPY shared shared
+COPY frontend/packages frontend/packages
+COPY frontend/${APP} frontend/${APP}
 RUN npm run build -w @estate/shared && npm run build -w @estate/${APP}
 
 FROM base AS runtime
 ARG APP=web
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
-COPY --from=build --chown=node:node /repo/apps/${APP}/.next/standalone ./
-COPY --from=build --chown=node:node /repo/apps/${APP}/.next/static ./apps/${APP}/.next/static
-COPY --from=build --chown=node:node /repo/apps/${APP}/public ./apps/${APP}/public
+COPY --from=build --chown=node:node /repo/frontend/${APP}/.next/standalone ./
+COPY --from=build --chown=node:node /repo/frontend/${APP}/.next/static ./frontend/${APP}/.next/static
+COPY --from=build --chown=node:node /repo/frontend/${APP}/public ./frontend/${APP}/public
 USER node
-ENV APP_DIR=apps/${APP}
+ENV APP_DIR=frontend/${APP}
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"

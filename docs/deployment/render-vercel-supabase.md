@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | PostgreSQL (with PostGIS) and photo/document storage | **Supabase** | Southeast Asia (Singapore) |
 | Backend API, background jobs, queue (Redis-compatible Key Value) | **Render** — [`render.yaml`](../../render.yaml) | Singapore |
-| Website (`apps/web`) and business console (`apps/console`) | **Vercel** — two projects, see `apps/*/vercel.json` | Singapore (`sin1`) |
+| Website (`frontend/web`) and business console (`frontend/console`) | **Vercel** — two projects, see `frontend/*/vercel.json` | Singapore (`sin1`) |
 
 Everything sits in one region because the API makes many database queries per page.
 Never put any of the values below in GitHub — they go into the Supabase, Render and Vercel dashboards only.
@@ -69,7 +69,7 @@ Vercel → **Add New → Project** → import **Shahbazk03/Basera** — do this 
 | | Website | Console |
 | --- | --- | --- |
 | Project name | `basera-web` | `basera-console` |
-| Root Directory | `apps/web` | `apps/console` |
+| Root Directory | `frontend/web` | `frontend/console` |
 | `API_INTERNAL_URL` | `https://basera-api.onrender.com` | same |
 | `WEB_PUBLIC_URL` | `https://basera-web.vercel.app` | same |
 | `CONSOLE_PUBLIC_URL` / `NEXT_PUBLIC_CONSOLE_URL` | `https://basera-console.vercel.app` | — |

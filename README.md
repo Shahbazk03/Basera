@@ -12,16 +12,31 @@ A real estate marketplace and business-management platform, launching in Lucknow
 
 > Records created by the development seed are flagged **Demo** everywhere they appear. They are sample data, not real properties or businesses.
 
+## Repository layout
+
+```
+backend/                 API server (NestJS) — deployed to Render
+frontend/
+  web/                   public website + project microsites (Next.js) — Vercel project 1
+  console/               business console for staff & partners (Next.js) — Vercel project 2
+  packages/ui/           UI components used by both frontends
+  packages/api-client/   browser client for the API
+shared/                  validation schemas, enums, permissions and business rules used by backend AND frontend
+e2e/                     end-to-end browser tests
+infrastructure/          Docker images, production compose, backup scripts
+docs/                    architecture, database, workflows, security, deployment
+```
+
 ## Architecture at a glance
 
 | Part | Tech | Port (dev) |
 | --- | --- | --- |
-| `apps/api` | NestJS 11 modular monolith, Prisma 7, PostgreSQL 17 + PostGIS, Redis/BullMQ | 4000 (`/api/v1`, Swagger at `/api/docs`) |
-| `apps/web` | Next.js 16 (App Router, server-rendered) — public site and project microsites | 3200 |
-| `apps/console` | Next.js 16 — admin, broker, developer, staff and lead-partner workspaces | 3300 |
-| `packages/shared` | Zod schemas, enums, permission catalogue, lifecycle state machines, payroll/commission calculators | — |
-| `packages/ui` | Tailwind v4 design system on Radix primitives | — |
-| `packages/api-client` | Typed fetch client with silent session refresh | — |
+| `backend` | NestJS 11 modular monolith, Prisma 7, PostgreSQL 17 + PostGIS, Redis/BullMQ | 4000 (`/api/v1`, Swagger at `/api/docs`) |
+| `frontend/web` | Next.js 16 (App Router, server-rendered) — public site and project microsites | 3200 |
+| `frontend/console` | Next.js 16 — admin, broker, developer, staff and lead-partner workspaces | 3300 |
+| `shared` | Zod schemas, enums, permission catalogue, lifecycle state machines, payroll/commission calculators | — |
+| `frontend/packages/ui` | Tailwind v4 design system on Radix primitives | — |
+| `frontend/packages/api-client` | Typed fetch client with silent session refresh | — |
 
 The API is the single source of truth: every rule (permissions, lifecycles, validation) is enforced server-side; the UIs reuse the same shared schemas for instant feedback. See [docs/architecture/overview.md](docs/architecture/overview.md).
 
@@ -75,9 +90,9 @@ All seeded accounts use the password from `SEED_DEFAULT_PASSWORD` in your `.env`
 
 | Suite | Location | Covers |
 | --- | --- | --- |
-| Shared unit | `packages/shared/src/*.spec.ts` | Lifecycle state machines, project status derivation, commission & payslip calculators, assignment engine, phone normalisation, hostname rules |
-| API unit | `apps/api/src/**/*.spec.ts` | Enum parity Prisma ↔ shared, encryption, upload type detection, permission scoping, PATCH/query-boolean validation |
-| API integration | `apps/api/test/*.int-spec.ts` | Through HTTP against a throw-away `*_test` database migrated with `prisma migrate deploy`: auth (lockout, refresh rotation & theft detection, CSRF), listings lifecycle & isolation, enquiries → leads → round-robin assignment, lead providers & duplicates, projects (booking-window statuses, concurrent reservations, page builder, domain verification), HR (attendance, leave, corrections), payroll (calculation, maker-checker, per-payslip approval, payments → ledger), commissions, invoices, expenses, admin safeguards |
+| Shared unit | `shared/src/*.spec.ts` | Lifecycle state machines, project status derivation, commission & payslip calculators, assignment engine, phone normalisation, hostname rules |
+| API unit | `backend/src/**/*.spec.ts` | Enum parity Prisma ↔ shared, encryption, upload type detection, permission scoping, PATCH/query-boolean validation |
+| API integration | `backend/test/*.int-spec.ts` | Through HTTP against a throw-away `*_test` database migrated with `prisma migrate deploy`: auth (lockout, refresh rotation & theft detection, CSRF), listings lifecycle & isolation, enquiries → leads → round-robin assignment, lead providers & duplicates, projects (booking-window statuses, concurrent reservations, page builder, domain verification), HR (attendance, leave, corrections), payroll (calculation, maker-checker, per-payslip approval, payments → ledger), commissions, invoices, expenses, admin safeguards |
 | End-to-end | `e2e/*.spec.ts` (Playwright) | Public search & detail pages, mobile layouts (no horizontal scroll), broker registration → verification → listing → approval → public enquiry → CRM lead, project creation → inventory → publication → unit enquiry → CRM lead |
 
 E2E tests run against the dev stack and create uniquely named records in the development database.

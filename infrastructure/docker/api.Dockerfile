@@ -8,19 +8,19 @@ ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 # ── Dependencies (all workspaces so npm ci matches the lockfile) ─────────────
 FROM base AS deps
 COPY package.json package-lock.json ./
-COPY apps/api/package.json apps/api/
-COPY apps/web/package.json apps/web/
-COPY apps/console/package.json apps/console/
-COPY packages/shared/package.json packages/shared/
-COPY packages/ui/package.json packages/ui/
-COPY packages/api-client/package.json packages/api-client/
+COPY backend/package.json backend/
+COPY frontend/web/package.json frontend/web/
+COPY frontend/console/package.json frontend/console/
+COPY shared/package.json shared/
+COPY frontend/packages/ui/package.json frontend/packages/ui/
+COPY frontend/packages/api-client/package.json frontend/packages/api-client/
 RUN npm ci --no-audit --no-fund
 
 # ── Build ───────────────────────────────────────────────────────────────────
 FROM deps AS build
 COPY tsconfig.base.json ./
-COPY packages/shared packages/shared
-COPY apps/api apps/api
+COPY shared shared
+COPY backend backend
 # DATABASE_URL is only needed by prisma.config.ts at generate time; no connection is made.
 RUN DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/shared \
  && DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/api
@@ -31,20 +31,20 @@ RUN npm prune --omit=dev --workspace @estate/api --workspace @estate/shared --in
 
 # ── Migration job image (has the Prisma CLI) ───────────────────────────────
 FROM build AS migrate
-WORKDIR /repo/apps/api
+WORKDIR /repo/backend
 CMD ["npx", "prisma", "migrate", "deploy"]
 
 # ── Runtime ─────────────────────────────────────────────────────────────────
 FROM base AS runtime
 ENV NODE_ENV=production
 COPY --from=prod-deps /repo/node_modules ./node_modules
-COPY --from=build /repo/packages/shared/package.json packages/shared/package.json
-COPY --from=build /repo/packages/shared/dist packages/shared/dist
-COPY --from=build /repo/apps/api/package.json apps/api/package.json
-COPY --from=build /repo/apps/api/dist apps/api/dist
+COPY --from=build /repo/shared/package.json shared/package.json
+COPY --from=build /repo/shared/dist shared/dist
+COPY --from=build /repo/backend/package.json backend/package.json
+COPY --from=build /repo/backend/dist backend/dist
 RUN mkdir -p /repo/storage && chown -R node:node /repo/storage
 USER node
-WORKDIR /repo/apps/api
+WORKDIR /repo/backend
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||4000)+'/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

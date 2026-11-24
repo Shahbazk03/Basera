@@ -2,7 +2,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import type { ProjectCard as ProjectCardData, PropertyCard as PropertyCardData } from '@estate/shared';
 import { pluralize } from '@estate/shared';
-import { apiGet, getSettings, siteUrl } from '@/lib/api-server';
+import { PHASE_PRODUCTION_BUILD } from 'next/constants';
+import { apiGetOptional, getSettings, siteUrl } from '@/lib/api-server';
 import { HeroSearch, type HeroPropertyType } from '@/components/home/hero-search';
 import { BrokerTiles, LocalityTiles, ProjectGrid, PropertyGrid, RecentList, Section, SectionHeader, WhyChooseUs, type BrokerTile } from '@/components/home/sections';
 import { CategoryTabs, type CategoryTab } from '@/components/home/category-tabs';
@@ -25,11 +26,19 @@ interface HeroData {
 }
 
 export default async function HomePage() {
-  const [home, settings, types] = await Promise.all([
-    apiGet<{ city: { name: string; slug: string } | null; sections: HomeSection[] }>('/public/home'),
+  const [homeData, settings, typesData] = await Promise.all([
+    apiGetOptional<{ city: { name: string; slug: string } | null; sections: HomeSection[] }>('/public/home', undefined, 60),
     getSettings(),
-    apiGet<HeroPropertyType[]>('/public/property-types', undefined, { revalidate: 600 }),
+    apiGetOptional<HeroPropertyType[]>('/public/property-types', undefined, 600),
   ]);
+  // While the site is being built (e.g. on Vercel) the API may be unreachable — still deploying or asleep.
+  // The build then produces an empty shell that is regenerated within a minute. At runtime an empty homepage
+  // is never cached: failing here keeps the last good version on screen until the API answers again.
+  if ((!homeData || !typesData) && process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+    throw new Error('Homepage data is temporarily unavailable');
+  }
+  const home = homeData ?? { city: null, sections: [] };
+  const types = typesData ?? [];
   const citySlug = home.city?.slug ?? settings.marketplace.defaultCitySlug;
   const cityName = home.city?.name ?? 'Lucknow';
   let tabsRendered = false;

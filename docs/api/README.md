@@ -37,4 +37,4 @@ All errors share one shape:
 | 5xx | Unexpected — the `requestId` correlates with server logs |
 
 ## Pagination, filtering, sorting
-`?page=1&pageSize=25` (max 100), endpoint-specific filters (e.g. `status`, `q`, `organizationId`), and `sort` where documented. Public property search: see `propertySearchSchema` in `packages/shared/src/property.ts`.
+`?page=1&pageSize=25` (max 100), endpoint-specific filters (e.g. `status`, `q`, `organizationId`), and `sort` where documented. Public property search: see `propertySearchSchema` in `shared/src/property.ts`.

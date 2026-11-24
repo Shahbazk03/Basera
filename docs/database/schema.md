@@ -1,6 +1,6 @@
 # Database
 
-PostgreSQL 17 with the **PostGIS** and **pg_trgm** extensions. Schema source: `apps/api/prisma/schema.prisma` (≈90 tables). Migrations: `apps/api/prisma/migrations` (never edit production tables by hand).
+PostgreSQL 17 with the **PostGIS** and **pg_trgm** extensions. Schema source: `backend/prisma/schema.prisma` (≈90 tables). Migrations: `backend/prisma/migrations` (never edit production tables by hand).
 
 ## Conventions
 

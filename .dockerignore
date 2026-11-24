@@ -6,8 +6,8 @@
 **/.env
 **/.env.*
 !.env.example
-apps/api/src/generated
-apps/api/storage
+backend/src/generated
+backend/storage
 storage
 test-results
 playwright-report

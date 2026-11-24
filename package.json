@@ -4,8 +4,11 @@
   "private": true,
   "description": "Real estate marketplace and business management platform (modular monolith).",
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "shared",
+    "backend",
+    "frontend/packages/*",
+    "frontend/web",
+    "frontend/console"
   ],
   "engines": {
     "node": ">=22.11.0"

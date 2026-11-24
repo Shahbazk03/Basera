@@ -10,7 +10,7 @@ build/
 coverage/
 
 # Generated Prisma client
-apps/api/src/generated/
+backend/src/generated/
 
 # Environment files (never commit secrets) — only blank templates are tracked
 .env
@@ -25,7 +25,7 @@ apps/api/src/generated/
 
 # Local file storage (development uploads)
 storage/
-apps/api/storage/
+backend/storage/
 
 # Test artefacts
 test-results/

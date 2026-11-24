@@ -8,18 +8,18 @@ FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY package.json package-lock.json ./
-COPY apps/api/package.json apps/api/
-COPY apps/web/package.json apps/web/
-COPY apps/console/package.json apps/console/
-COPY packages/shared/package.json packages/shared/
-COPY packages/ui/package.json packages/ui/
-COPY packages/api-client/package.json packages/api-client/
+COPY backend/package.json backend/
+COPY frontend/web/package.json frontend/web/
+COPY frontend/console/package.json frontend/console/
+COPY shared/package.json shared/
+COPY frontend/packages/ui/package.json frontend/packages/ui/
+COPY frontend/packages/api-client/package.json frontend/packages/api-client/
 RUN npm ci --no-audit --no-fund
 
 FROM deps AS build
 COPY tsconfig.base.json ./
-COPY packages/shared packages/shared
-COPY apps/api apps/api
+COPY shared shared
+COPY backend backend
 # DATABASE_URL is only read by prisma.config.ts while generating the client; no connection is made.
 RUN DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/shared \
  && DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/api
@@ -30,6 +30,6 @@ ENV NODE_ENV=production
 COPY infrastructure/docker/api-start.sh /usr/local/bin/api-start
 RUN chmod 755 /usr/local/bin/api-start
 USER node
-WORKDIR /repo/apps/api
+WORKDIR /repo/backend
 EXPOSE 10000
 CMD ["api-start"]

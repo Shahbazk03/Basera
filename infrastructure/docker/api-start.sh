@@ -3,7 +3,7 @@
 #   RUN_RELEASE_TASKS=false            skip migrations and reference data (default: run them)
 #   ADMIN_EMAIL / ADMIN_NAME / ADMIN_PASSWORD   create the first Super Admin if it does not exist yet
 set -e
-cd /repo/apps/api
+cd /repo/backend
 
 if [ "${RUN_RELEASE_TASKS:-true}" = "true" ]; then
   echo "[release] Applying database migrations"

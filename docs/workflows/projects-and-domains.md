@@ -28,7 +28,7 @@ A project page is an ordered list of typed sections (hero, overview, key facts, 
 2. **Platform subdomain**: `https://<label>.brand.in` — the platform controls the zone (wildcard DNS), so subdomains are active immediately.
 3. **Custom domain**: `https://www.project-name.in`
 
-`apps/web/proxy.ts` resolves non-platform hosts through `GET /api/v1/public/domains/resolve` and rewrites them to the project microsite. Unknown or unverified hosts return 404, and the internal `/site/*` path is never reachable directly on a mapped host.
+`frontend/web/proxy.ts` resolves non-platform hosts through `GET /api/v1/public/domains/resolve` and rewrites them to the project microsite. Unknown or unverified hosts return 404, and the internal `/site/*` path is never reachable directly on a mapped host.
 
 **Canonical address & SEO.** A project's canonical URL is its *primary* domain when one is set (console → Domains → "Make primary address"), otherwise the marketplace page `/projects/<slug>`. On a mapped host, `robots.txt` and `sitemap.xml` are the microsite's own: only the canonical host advertises and serves a sitemap (listing the microsite page); the marketplace sitemap omits projects whose canonical address is their own domain.
 

@@ -14,9 +14,9 @@ flowchart LR
   end
   V -->|brand.in · *.brand.in · custom domains| Edge
   S -->|console.brand.in| Edge
-  Edge --> WEB["apps/web — Next.js\nSSR marketplace + microsites\nproxy.ts host → project"]
-  Edge --> CON["apps/console — Next.js\nback-office workspaces"]
-  WEB -->|/api/v1 rewrite + SSR fetch| API["apps/api — NestJS\n/api/v1 REST"]
+  Edge --> WEB["frontend/web — Next.js\nSSR marketplace + microsites\nproxy.ts host → project"]
+  Edge --> CON["frontend/console — Next.js\nback-office workspaces"]
+  WEB -->|/api/v1 rewrite + SSR fetch| API["backend — NestJS\n/api/v1 REST"]
   CON -->|/api/v1 rewrite| API
   API --> PG[(PostgreSQL 17\n+ PostGIS + pg_trgm)]
   API --> R[(Redis\nBullMQ · rate limits)]
@@ -28,11 +28,11 @@ flowchart LR
 
 | App | Responsibility |
 | --- | --- |
-| **apps/api** | All business rules, validation, authorisation, persistence, background jobs, notification delivery, file storage. |
-| **apps/web** | Server-rendered public marketplace (SEO), project pages, microsites for subdomains/custom domains, customer account. |
-| **apps/console** | Back-office for every non-customer user. One app with function-oriented routes (`/listings`, `/crm/leads`, `/hr/...`); the sidebar shows only what the user's permissions allow. |
+| **backend** | All business rules, validation, authorisation, persistence, background jobs, notification delivery, file storage. |
+| **frontend/web** | Server-rendered public marketplace (SEO), project pages, microsites for subdomains/custom domains, customer account. |
+| **frontend/console** | Back-office for every non-customer user. One app with function-oriented routes (`/listings`, `/crm/leads`, `/hr/...`); the sidebar shows only what the user's permissions allow. |
 
-### API modules (`apps/api/src/modules`)
+### API modules (`backend/src/modules`)
 
 | Module | Owns |
 | --- | --- |
@@ -81,7 +81,7 @@ Why two frontends instead of five: public pages and back-office have different r
 
 ## Project microsites and domains
 
-`apps/web/proxy.ts` inspects the Host header. Main hosts render the marketplace; any other host is resolved through `GET /public/domains/resolve` (only ACTIVE, verified domains of published projects) and rewritten to `/site/<project>`. Custom domains are verified by a DNS TXT record; certificates are issued only for verified domains (Caddy asks `/public/domains/tls-check`). See [projects & domains](../workflows/projects-and-domains.md).
+`frontend/web/proxy.ts` inspects the Host header. Main hosts render the marketplace; any other host is resolved through `GET /public/domains/resolve` (only ACTIVE, verified domains of published projects) and rewritten to `/site/<project>`. Custom domains are verified by a DNS TXT record; certificates are issued only for verified domains (Caddy asks `/public/domains/tls-check`). See [projects & domains](../workflows/projects-and-domains.md).
 
 ## Files
 
