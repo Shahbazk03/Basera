@@ -22,7 +22,7 @@ function Welcome() {
   );
 }
 
-const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const MAX_PHOTO_BYTES = 1 * 1024 * 1024;
 
 /** Name and profile photo — PATCH /auth/me returns the refreshed session user. */
 function ProfileEditor({ user }: { user: SessionUser }) {
@@ -43,7 +43,7 @@ function ProfileEditor({ user }: { user: SessionUser }) {
     e.target.value = '';
     if (!file) return;
     if (file.size > MAX_PHOTO_BYTES) {
-      toast.error('Choose a photo smaller than 10 MB');
+      toast.error('Choose a photo of 1 MB or less');
       return;
     }
     setPhotoBusy(true);
@@ -74,7 +74,7 @@ function ProfileEditor({ user }: { user: SessionUser }) {
               </Button>
             ) : null}
           </div>
-          <p className="text-xs text-ink-500">JPEG, PNG or WebP, up to 10 MB. It is cropped to a square.</p>
+          <p className="text-xs text-ink-500">JPEG, PNG or WebP, up to 1 MB. It is cropped to a square.</p>
         </div>
         <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => void onPhoto(e)} aria-label="Upload profile photo" />
       </div>

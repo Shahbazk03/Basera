@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -8,6 +8,7 @@ import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser, OptionalUser, Public } from '../../common/decorators';
 import { UuidParam, ZodPipe } from '../../common/zod.pipe';
 import { FilesService, UPLOAD_PURPOSES, UploadPurpose } from './files.service';
+import { verifyDownloadSignature } from './storage';
 
 const uploadBody = z.object({
   purpose: z.enum(Object.keys(UPLOAD_PURPOSES) as [UploadPurpose, ...UploadPurpose[]]),
@@ -35,16 +36,22 @@ export class FilesController {
     return this.files.downloadUrl(user, id);
   }
 
-  /** Signed download link (local storage driver only). */
+  /** Signed download link (local and database storage drivers; S3 links point at S3 itself). */
   @Public()
   @Get(':id/download')
   async download(@Param('id', UuidParam) id: string, @Query(new ZodPipe(z.object({ exp: z.coerce.number().int(), sig: z.string().min(10).max(200) }))) q: { exp: number; sig: string }, @Res() res: Response) {
-    if (this.files.driverName !== 'local' || !this.files.local.verifySignature(id, q.exp, q.sig)) throw new ForbiddenException('This link is invalid or has expired');
+    if (this.files.driverName === 's3' || !verifyDownloadSignature(id, q.exp, q.sig)) throw new ForbiddenException('This link is invalid or has expired');
     const file = await this.files.getForDownload(id);
+    const stored = this.files.driverName === 'database' ? await this.files.database.read(file.storageKey, file.visibility) : null;
+    if (this.files.driverName === 'database' && !stored) throw new NotFoundException('File not found');
     res.setHeader('Content-Type', file.mimeType);
     res.setHeader('Content-Disposition', `${file.mimeType === 'application/pdf' || file.mimeType.startsWith('image/') ? 'inline' : 'attachment'}; filename="${file.fileName.replace(/"/g, '')}"`);
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (stored) {
+      res.end(stored.body);
+      return;
+    }
     this.files.local.stream(file.storageKey, file.visibility).on('error', () => res.status(404).end()).pipe(res);
   }
 }

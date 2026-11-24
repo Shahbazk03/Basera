@@ -52,7 +52,8 @@ const envSchema = z
     CUSTOM_DOMAIN_CNAME_TARGET: z.string().default(''),
     CUSTOM_DOMAIN_A_RECORD: optionalString,
     TLS_PROVIDER: z.enum(['none', 'caddy-on-demand']).default('none'),
-    STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+    // local: files on this computer (development only) · database: inside MongoDB · s3: S3-compatible storage
+    STORAGE_DRIVER: z.enum(['local', 'database', 's3']).default('local'),
     STORAGE_LOCAL_DIR: z.string().default('./storage'),
     S3_ENDPOINT: optionalString,
     S3_REGION: optionalString,
@@ -86,7 +87,7 @@ const envSchema = z
         if (env[key].startsWith('replace-with')) ctx.addIssue({ code: 'custom', path: [key], message: 'placeholder secret in production' });
       }
       if (env.STORAGE_DRIVER === 'local') {
-        ctx.addIssue({ code: 'custom', path: ['STORAGE_DRIVER'], message: 'use s3-compatible object storage in production' });
+        ctx.addIssue({ code: 'custom', path: ['STORAGE_DRIVER'], message: 'use database or s3 storage in production (files on the server disk are lost on redeploy)' });
       }
     }
   });

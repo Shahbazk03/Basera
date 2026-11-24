@@ -1039,6 +1039,21 @@ model StoredFile {
   @@map("stored_files")
 }
 
+/// Contents of uploaded files when STORAGE_DRIVER=database (photos and documents kept in MongoDB itself).
+/// Stored in parts because one MongoDB document holds at most 16 MB.
+model StoredFileChunk {
+  id         String         @id @default(uuid(7)) @map("_id")
+  storageKey String
+  visibility FileVisibility
+  mimeType   String
+  part       Int
+  data       Bytes
+  createdAt  DateTime       @default(now())
+
+  @@unique([storageKey, part])
+  @@map("stored_file_chunks")
+}
+
 // ═════════════════════════ Locations ═════════════════════════
 
 model Country {

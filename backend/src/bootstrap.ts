@@ -1,9 +1,11 @@
-import { VersioningType } from '@nestjs/common';
+import { Logger, VersioningType } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import path from 'node:path';
 import { corsOrigins, env } from './config/env';
+import { DatabaseStorageDriver } from './modules/files/storage';
 
 /** HTTP pipeline shared by the server entry point and the integration test-suite. */
 export function configureApp(app: NestExpressApplication): void {
@@ -35,6 +37,18 @@ export function configureApp(app: NestExpressApplication): void {
   // Public uploads (local storage driver). Private files are never served statically.
   if (e.STORAGE_DRIVER === 'local') {
     app.useStaticAssets(path.resolve(e.STORAGE_LOCAL_DIR, 'public'), { prefix: '/uploads/', maxAge: '7d', immutable: true, index: false, dotfiles: 'deny' });
+  }
+  // Public uploads kept in the database (database storage driver), at the same /uploads/<key> addresses.
+  if (e.STORAGE_DRIVER === 'database') {
+    const storage = app.get(DatabaseStorageDriver);
+    const logger = new Logger('Uploads');
+    app.use('/uploads', (req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      storage.servePublic(req.path, res).catch((err: unknown) => {
+        logger.error(`Could not serve /uploads${req.path}: ${err instanceof Error ? err.message : String(err)}`);
+        if (!res.headersSent) res.status(500).end();
+      });
+    });
   }
   app.enableShutdownHooks();
 }

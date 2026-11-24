@@ -84,7 +84,7 @@ export function ImageUploader({
           <ImagePlus className="size-5" />
         </div>
         <p className="mt-3 text-sm font-medium text-ink-900">Drag photos here or browse</p>
-        <p className="mt-1 text-xs text-ink-500">JPEG, PNG, WebP or AVIF up to 10 MB each. Location metadata is removed automatically.</p>
+        <p className="mt-1 text-xs text-ink-500">JPEG, PNG, WebP or AVIF up to 1 MB each. Location metadata is removed automatically.</p>
         <Button type="button" variant="outline" size="sm" className="mt-4" disabled={disabled || items.length >= max} onClick={() => inputRef.current?.click()}>
           <Upload /> Choose photos
         </Button>
@@ -180,7 +180,7 @@ export function DocumentUpload({
       <Button type="button" variant="outline" size="sm" loading={busy} disabled={disabled} onClick={() => ref.current?.click()}>
         <FileText /> {label}
       </Button>
-      {name ? <span className="truncate text-xs text-ink-500">{name}</span> : <span className="text-xs text-ink-500">PDF or image, up to 15 MB</span>}
+      {name ? <span className="truncate text-xs text-ink-500">{name}</span> : <span className="text-xs text-ink-500">PDF up to 15 MB, or an image up to 1 MB</span>}
       <input
         ref={ref}
         type="file"

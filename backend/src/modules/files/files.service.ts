@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { env } from '../../config/env';
 import { AuthUser } from '../../common/auth/auth-user';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LocalStorageDriver, S3StorageDriver, StorageDriver, Visibility } from './storage';
+import { DatabaseStorageDriver, LocalStorageDriver, S3StorageDriver, StorageDriver, Visibility } from './storage';
 
 /** Upload purposes, their visibility and accepted kinds. */
 export const UPLOAD_PURPOSES = {
@@ -22,7 +22,7 @@ export const UPLOAD_PURPOSES = {
 } as const satisfies Record<string, { visibility: Visibility; kinds: readonly ('image' | 'pdf' | 'csv')[] }>;
 export type UploadPurpose = keyof typeof UPLOAD_PURPOSES;
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 1 * 1024 * 1024;
 const MAX_DOC_BYTES = 15 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 2560;
 const AVATAR_EDGE = 512;
@@ -54,8 +54,10 @@ export class FilesService {
     private readonly prisma: PrismaService,
     readonly local: LocalStorageDriver,
     s3: S3StorageDriver,
+    readonly database: DatabaseStorageDriver,
   ) {
-    this.driver = env().STORAGE_DRIVER === 's3' ? s3 : local;
+    const configured = env().STORAGE_DRIVER;
+    this.driver = configured === 's3' ? s3 : configured === 'database' ? database : local;
   }
 
   get driverName(): string {
@@ -187,6 +189,11 @@ export class FilesService {
 
   async readFileBuffer(fileId: string): Promise<Buffer> {
     const file = await this.getForDownload(fileId);
+    if (this.driver === this.database) {
+      const stored = await this.database.read(file.storageKey, file.visibility);
+      if (!stored) throw new BadRequestException('File could not be read');
+      return stored.body;
+    }
     if (this.driver.name !== 'local') {
       const url = await this.driver.signedUrl(file.id, file.storageKey, file.fileName, 60);
       const res = await fetch(url);

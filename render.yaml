@@ -5,7 +5,7 @@ services:
   - type: web
     name: basera-api
     runtime: docker
-    region: singapore            # same region as the MongoDB Atlas cluster and the S3 buckets
+    region: singapore            # same region as the MongoDB Atlas cluster
     plan: starter                # "free" works for trying it out, but sleeps when idle (scheduled jobs pause)
     dockerfilePath: ./infrastructure/docker/api.render.Dockerfile
     dockerContext: .
@@ -51,24 +51,10 @@ services:
         sync: false
       - key: TLS_PROVIDER
         value: none
-      # Photos and documents: Amazon S3 (two buckets: public media, private documents) — see the guide
+      # Photos and documents are kept inside the MongoDB database — no separate storage service (on the
+      # Atlas free tier the 512 MB is shared by data and files). S3-compatible storage later: STORAGE_DRIVER=s3.
       - key: STORAGE_DRIVER
-        value: s3
-      - key: S3_FORCE_PATH_STYLE
-        value: "false"
-      - key: S3_REGION
-        value: ap-southeast-1      # Asia Pacific (Singapore); change if your buckets are elsewhere
-      - key: S3_BUCKET_PUBLIC
-        sync: false
-      - key: S3_BUCKET_PRIVATE
-        sync: false
-      # https://<public-bucket>.s3.ap-southeast-1.amazonaws.com
-      - key: S3_PUBLIC_BASE_URL
-        sync: false
-      - key: S3_ACCESS_KEY_ID
-        sync: false
-      - key: S3_SECRET_ACCESS_KEY
-        sync: false
+        value: database
       # First Super Admin, created on the first start (an existing one is never changed)
       - key: ADMIN_EMAIL
         sync: false
