@@ -118,7 +118,8 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
       isPlatformUser: user.workspaces.includes('admin') || user.workspaces.includes('staff'),
       logout: async () => {
         try {
-          await api.post('/auth/logout');
+          // Other tabs using the same account keep it (only this tab signs out then).
+          await api.signOutThisTab();
         } finally {
           qc.clear();
           window.location.assign('/login');

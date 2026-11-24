@@ -99,7 +99,14 @@ export function tabSessionsSupported(): boolean {
 export function tabSessionSlot(): string | null {
   if (typeof window === 'undefined' || !tabSessionsSupported()) return null;
   try {
-    return window.sessionStorage.getItem(SLOT_STORAGE_KEY);
+    const slot = window.sessionStorage.getItem(SLOT_STORAGE_KEY);
+    // Older versions remembered 'main' too, which made that tab's next sign-in replace the account the
+    // other tabs use. The main account is the default anyway: forget it.
+    if (slot === MAIN_SLOT) {
+      window.sessionStorage.removeItem(SLOT_STORAGE_KEY);
+      return null;
+    }
+    return slot;
   } catch {
     return null;
   }
@@ -136,12 +143,52 @@ function guardPageCache(): void {
   });
 }
 
+/**
+ * The open tabs of this app (same origin) tell each other whether they use the browser's main account,
+ * so signing out in one tab does not sign out the account another tab is still using.
+ */
+let tabChannel: BroadcastChannel | null = null;
+function tabsChannel(): BroadcastChannel | null {
+  if (tabChannel || typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return tabChannel;
+  const channel = new BroadcastChannel('estate.tabs');
+  channel.addEventListener('message', (e: MessageEvent) => {
+    const msg = e.data as { type?: string; id?: string } | null;
+    if (msg?.type === 'who-uses-main' && msg.id && tabSessionsSupported() && tabSessionSlot() === null) channel.postMessage({ type: 'uses-main', id: msg.id });
+  });
+  tabChannel = channel;
+  return channel;
+}
+
+/** Whether another open tab of this app uses the browser's main account (they answer within ~150 ms). */
+function otherTabsUseMainAccount(waitMs = 150): Promise<boolean> {
+  const channel = tabsChannel();
+  if (!channel) return Promise.resolve(false);
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  return new Promise((resolve) => {
+    const onMessage = (e: MessageEvent) => {
+      const msg = e.data as { type?: string; id?: string } | null;
+      if (msg?.type === 'uses-main' && msg.id === id) finish(true);
+    };
+    const finish = (answer: boolean) => {
+      clearTimeout(timer);
+      channel.removeEventListener('message', onMessage);
+      resolve(answer);
+    };
+    const timer = setTimeout(() => finish(false), waitMs);
+    channel.addEventListener('message', onMessage);
+    channel.postMessage({ type: 'who-uses-main', id });
+  });
+}
+
 export type ApiClient = ReturnType<typeof createApiClient>;
 
 export function createApiClient(config: ApiClientConfig) {
   const base = config.baseUrl.replace(/\/$/, '');
   let refreshing: Promise<boolean> | null = null;
-  if (config.sessionSlots) guardPageCache();
+  if (config.sessionSlots) {
+    guardPageCache();
+    tabsChannel();
+  }
 
   function slotHeaders(): Record<string, string> {
     if (!config.sessionSlots || typeof window === 'undefined') return {};
@@ -157,8 +204,10 @@ export function createApiClient(config: ApiClientConfig) {
     if (path.startsWith('/auth/logout-all')) return writeTabSlot(null);
     // After signing out a tab-only account the tab stays signed out (it must not show the main account).
     if (path.startsWith('/auth/logout')) return writeTabSlot(isTabSlot(tabSessionSlot()) ? NO_SESSION_SLOT : null);
+    // A tab on the main account remembers nothing: its next sign-in must not replace the account other
+    // tabs use (the API then gives it an account of its own). Only tab-only accounts are remembered.
     const slot = res.headers.get('x-session-slot');
-    if (slot) writeTabSlot(slot);
+    if (slot) writeTabSlot(slot === MAIN_SLOT ? null : slot);
   }
 
   function refreshSession(): Promise<boolean> {
@@ -273,6 +322,19 @@ export function createApiClient(config: ApiClientConfig) {
         }
       }
       writeTabSlot(NO_SESSION_SLOT);
+    },
+    /**
+     * "Sign out" in a tab. When this tab uses the browser's main account and another open tab uses it
+     * too, only this tab is signed out — the other tabs keep the account, and a different account can be
+     * signed in here. Otherwise the tab's account is signed out. Returns which of the two happened.
+     */
+    async signOutThisTab(): Promise<'tab' | 'account'> {
+      if (config.sessionSlots && tabSessionsSupported() && tabSessionSlot() === null && (await otherTabsUseMainAccount())) {
+        writeTabSlot(NO_SESSION_SLOT);
+        return 'tab';
+      }
+      await request('POST', '/auth/logout');
+      return 'account';
     },
     /** Signs every account of this app out of this browser (main and tab-only accounts). */
     async signOutEverywhere(): Promise<void> {
