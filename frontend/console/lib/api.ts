@@ -6,6 +6,7 @@ import { createApiClient } from '@estate/api-client';
 export const api = createApiClient({
   baseUrl: '',
   refreshOn401: true,
+  sessionSlots: true,
   onAuthFailure: () => {
     if (typeof window === 'undefined') return;
     const here = window.location.pathname + window.location.search;

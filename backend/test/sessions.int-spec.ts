@@ -5,7 +5,8 @@ const WEB_ORIGIN = 'http://localhost:3200';
 
 function cookieNames(setCookie: string[] | string | undefined): string[] {
   const list = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
-  return list.map((c) => c.split('=')[0]);
+  // Session cookies carry a per-sign-in slot suffix (estate_console_at_<slot>); compare their prefixes.
+  return list.map((c) => c.split('=')[0].replace(/_[a-z0-9]{12,24}$/, ''));
 }
 
 /** Independent website/console sessions, and administrator-set (temporary) passwords. */
@@ -43,6 +44,75 @@ describe('Sessions & administrator-set passwords', () => {
     expect((await browser.get('/api/v1/auth/me').set('X-Forwarded-Host', consoleHost)).body.id).toBe(staff.id);
     // The console refresh flow uses the console's own refresh cookie.
     expect((await browser.post('/api/v1/auth/refresh').set('Origin', ORIGIN).set('X-Forwarded-Host', consoleHost)).status).toBe(200);
+  });
+
+  it('keeps two tabs of the same app signed in as different people', async () => {
+    const ops = await createUser(ctx.prisma, { roleKey: 'SALES_EXECUTIVE' });
+    const broker = await createUser(ctx.prisma);
+    const admin = await createUser(ctx.prisma, { roleKey: 'ADMIN' });
+    const server = ctx.app.getHttpServer();
+    const browser = request.agent(server); // one cookie jar, like one Chrome profile
+    const call = <T extends { set(k: string, v: string): T }>(r: T, slot?: string) => {
+      const withHost = r.set('Origin', ORIGIN).set('X-Forwarded-Host', consoleHost);
+      return slot ? withHost.set('X-Session-Slot', slot) : withHost;
+    };
+    const signIn = (email: string, slot?: string) => call(browser.post('/api/v1/auth/login'), slot).send({ identifier: email, password: PASSWORD });
+    const me = (slot?: string) => call(browser.get('/api/v1/auth/me'), slot);
+
+    // Tab A signs in first: that becomes the browser's main account (plain cookie names, as before).
+    const a = await signIn(ops.email!);
+    expect(a.headers['x-session-slot']).toBe('main');
+    // Tab B is a fresh tab and signs in too while the main account is in use: it gets an account of its own.
+    const b = await signIn(broker.email!);
+    const slotB = b.headers['x-session-slot'] as string;
+    expect(slotB).toMatch(/^[a-z0-9]{12,24}$/);
+    expect((await me('main')).body.id).toBe(ops.id);
+    expect((await me()).body.id).toBe(ops.id); // new tabs, plain links: always the main account — never guessed
+    expect((await me(slotB)).body.id).toBe(broker.id);
+    expect((await me('none')).status).toBe(401); // a tab that chose "use another account" and has not signed in yet
+
+    // Signing in again in tab B replaces only tab B's account (same slot, old session revoked).
+    const b2 = await signIn(admin.email!, slotB);
+    expect(b2.headers['x-session-slot']).toBe(slotB);
+    expect((await me(slotB)).body.id).toBe(admin.id);
+    const brokerSessions = await ctx.prisma.session.findMany({ where: { userId: broker.id } });
+    expect(brokerSessions.every((x) => x.revokedAt)).toBe(true);
+
+    // Refreshing tab B keeps it in its slot; signing tab B out leaves tab A signed in.
+    const refreshed = await call(browser.post('/api/v1/auth/refresh'), slotB);
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.headers['x-session-slot']).toBe(slotB);
+    expect((await call(browser.post('/api/v1/auth/logout'), slotB)).status).toBe(200);
+    expect((await me(slotB)).status).toBe(401);
+    expect((await me()).body.id).toBe(ops.id);
+
+    // At most 5 tab-only accounts: a 6th signs the oldest out, on the server as well.
+    const tabSlots: string[] = [];
+    for (let i = 0; i < 6; i += 1) tabSlots.push((await signIn(broker.email!, 'none')).headers['x-session-slot'] as string);
+    expect((await me(tabSlots[0])).status).toBe(401);
+    expect((await me(tabSlots[5])).body.id).toBe(broker.id);
+    expect(await ctx.prisma.session.count({ where: { userId: broker.id, revokedReason: 'TAB_LIMIT' } })).toBe(1);
+
+    // "Sign out of all accounts" ends every account of this app in this browser.
+    expect((await call(browser.post('/api/v1/auth/logout-all'))).status).toBe(200);
+    expect((await me()).status).toBe(401);
+    expect((await me(tabSlots[5])).status).toBe(401);
+    expect(await ctx.prisma.session.count({ where: { userId: { in: [ops.id, broker.id] }, revokedAt: null } })).toBe(0);
+  });
+
+  it('starts a new main session when the main account was signed out, even from a tab that chose another account', async () => {
+    const first = await createUser(ctx.prisma);
+    const second = await createUser(ctx.prisma);
+    const browser = request.agent(ctx.app.getHttpServer());
+    const call = <T extends { set(k: string, v: string): T }>(r: T, slot?: string) => {
+      const withHost = r.set('Origin', ORIGIN).set('X-Forwarded-Host', consoleHost);
+      return slot ? withHost.set('X-Session-Slot', slot) : withHost;
+    };
+    await call(browser.post('/api/v1/auth/login')).send({ identifier: first.email, password: PASSWORD });
+    expect((await call(browser.post('/api/v1/auth/logout'))).status).toBe(200);
+    const again = await call(browser.post('/api/v1/auth/login'), 'none').send({ identifier: second.email, password: PASSWORD });
+    expect(again.headers['x-session-slot']).toBe('main');
+    expect((await call(browser.get('/api/v1/auth/me'))).body.id).toBe(second.id);
   });
 
   it('lets an administrator set a password that must be replaced at the next sign-in', async () => {

@@ -16,7 +16,22 @@ import {
 import { z } from 'zod';
 import { env } from '../../config/env';
 import { AuthUser } from '../../common/auth/auth-user';
-import { clearAuthCookies, readRefreshCookie, setAccessCookie, setAuthCookies } from '../../common/auth/cookies';
+import {
+  clearAllAuthCookies,
+  clearAuthCookies,
+  clearSlotCookies,
+  isTabSlotId,
+  MAIN_SLOT,
+  MAX_TAB_SLOTS,
+  newTabSlotId,
+  readRefreshCookie,
+  readRefreshCookieOf,
+  requestedSlot,
+  sessionSlot,
+  setAccessCookie,
+  setAuthCookies,
+  tabSlots,
+} from '../../common/auth/cookies';
 import { AllowPendingPasswordChange, ApiZodBody, CurrentUser, OptionalUser, Public, ReqMeta, RequestMeta } from '../../common/decorators';
 import { PatchPipe, UuidParam, ZodPipe } from '../../common/zod.pipe';
 import { AuthService, IssuedTokens } from './auth.service';
@@ -34,9 +49,33 @@ export class AuthController {
     private readonly authContext: AuthContextService,
   ) {}
 
-  private async respond(res: Response, tokens: IssuedTokens) {
-    if (tokens.refreshToken) setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
-    else setAccessCookie(res, tokens.accessToken);
+  /**
+   * Where a sign-in goes (see cookies.ts):
+   *  - a tab that already holds an account (its slot, or `main`) replaces that account;
+   *  - a tab that holds none (`none`, or a fresh tab while the browser's main session is in use) gets a
+   *    new tab-only slot, so the account other tabs use is never replaced;
+   *  - otherwise the sign-in becomes the browser's main session.
+   * Replaced sessions, and the oldest tab slots beyond MAX_TAB_SLOTS, are revoked on the server.
+   */
+  private async signInSlot(req: Request, res: Response): Promise<string> {
+    const requested = requestedSlot(req);
+    if (requested === MAIN_SLOT || isTabSlotId(requested)) {
+      await this.auth.revokeRefreshTokens([readRefreshCookieOf(req, requested)], 'REPLACED');
+      return requested;
+    }
+    // A fresh tab (or one that chose "another account") takes over the main session only when nobody uses it.
+    if (!(await this.auth.isLiveRefreshToken(readRefreshCookieOf(req, MAIN_SLOT)))) return MAIN_SLOT;
+    const evicted = tabSlots(req).slice(MAX_TAB_SLOTS - 1);
+    await this.auth.revokeRefreshTokens(evicted.map((s) => readRefreshCookieOf(req, s)), 'TAB_LIMIT');
+    for (const s of evicted) clearSlotCookies(res, s);
+    return newTabSlotId();
+  }
+
+  private async respond(req: Request, res: Response, tokens: IssuedTokens, mode: 'sign-in' | 'refresh' = 'sign-in') {
+    if (tokens.refreshToken) {
+      const slot = mode === 'sign-in' ? await this.signInSlot(req, res) : (sessionSlot(req) ?? MAIN_SLOT);
+      setAuthCookies(res, tokens.accessToken, tokens.refreshToken, slot);
+    } else setAccessCookie(res, tokens.accessToken);
     const user = await this.authContext.buildUser(tokens.userId, tokens.sessionId);
     return { user: user ? await this.auth.sessionUser(user) : null, accessTokenExpiresIn: env().ACCESS_TOKEN_TTL_SECONDS };
   }
@@ -46,32 +85,32 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @ApiZodBody(loginSchema)
-  async login(@Body(new ZodPipe(loginSchema)) body: z.output<typeof loginSchema>, @ReqMeta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
-    return this.respond(res, await this.auth.login(body.identifier, body.password, meta));
+  async login(@Body(new ZodPipe(loginSchema)) body: z.output<typeof loginSchema>, @ReqMeta() meta: RequestMeta, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.respond(req, res, await this.auth.login(body.identifier, body.password, meta));
   }
 
   @Public()
   @Throttle(AUTH_THROTTLE)
   @Post('register')
   @ApiZodBody(customerRegisterSchema)
-  async register(@Body(new ZodPipe(customerRegisterSchema)) body: z.output<typeof customerRegisterSchema>, @ReqMeta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
-    return this.respond(res, await this.auth.registerCustomer(body, meta));
+  async register(@Body(new ZodPipe(customerRegisterSchema)) body: z.output<typeof customerRegisterSchema>, @ReqMeta() meta: RequestMeta, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.respond(req, res, await this.auth.registerCustomer(body, meta));
   }
 
   @Public()
   @Throttle(AUTH_THROTTLE)
   @Post('register/partner')
   @ApiZodBody(partnerRegisterSchema)
-  async registerPartner(@Body(new ZodPipe(partnerRegisterSchema)) body: z.output<typeof partnerRegisterSchema>, @ReqMeta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
-    return this.respond(res, await this.auth.registerPartner(body, meta));
+  async registerPartner(@Body(new ZodPipe(partnerRegisterSchema)) body: z.output<typeof partnerRegisterSchema>, @ReqMeta() meta: RequestMeta, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.respond(req, res, await this.auth.registerPartner(body, meta));
   }
 
   @Public()
   @Throttle(AUTH_THROTTLE)
   @Post('register/lead-provider')
   @ApiZodBody(leadProviderRegisterSchema)
-  async registerLeadProvider(@Body(new ZodPipe(leadProviderRegisterSchema)) body: z.output<typeof leadProviderRegisterSchema>, @ReqMeta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
-    return this.respond(res, await this.auth.registerLeadProvider(body, meta));
+  async registerLeadProvider(@Body(new ZodPipe(leadProviderRegisterSchema)) body: z.output<typeof leadProviderRegisterSchema>, @ReqMeta() meta: RequestMeta, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.respond(req, res, await this.auth.registerLeadProvider(body, meta));
   }
 
   @Public()
@@ -80,7 +119,7 @@ export class AuthController {
   @HttpCode(200)
   async refresh(@Req() req: Request, @ReqMeta() meta: RequestMeta, @Res({ passthrough: true }) res: Response) {
     try {
-      return await this.respond(res, await this.auth.refresh(refreshCookie(req), meta));
+      return await this.respond(req, res, await this.auth.refresh(refreshCookie(req), meta), 'refresh');
     } catch (err) {
       clearAuthCookies(res);
       throw err;
@@ -93,6 +132,16 @@ export class AuthController {
   async logout(@OptionalUser() user: AuthUser | undefined, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.auth.logout(user?.sessionId ?? null, refreshCookie(req));
     clearAuthCookies(res);
+    return { ok: true };
+  }
+
+  /** Signs every account of this app out of this browser (main session and all tab-only accounts). */
+  @Public()
+  @Post('logout-all')
+  @HttpCode(200)
+  async logoutAll(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await this.auth.revokeRefreshTokens([MAIN_SLOT, ...tabSlots(req)].map((s) => readRefreshCookieOf(req, s)), 'LOGOUT');
+    clearAllAuthCookies(res);
     return { ok: true };
   }
 
@@ -157,6 +206,7 @@ export class AuthController {
   }
 
   @Post('change-password')
+  @Throttle(AUTH_THROTTLE)
   @AllowPendingPasswordChange()
   @HttpCode(200)
   async changePassword(@CurrentUser() user: AuthUser, @Body(new ZodPipe(changePasswordSchema)) body: z.output<typeof changePasswordSchema>, @ReqMeta() meta: RequestMeta) {

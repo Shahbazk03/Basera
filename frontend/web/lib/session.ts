@@ -23,6 +23,8 @@ export function useCurrentUser() {
       }
     },
     staleTime: 60_000,
+    // Another tab may have switched or signed out this account.
+    refetchOnWindowFocus: 'always',
   });
 }
 

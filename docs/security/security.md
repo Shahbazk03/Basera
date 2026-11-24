@@ -2,7 +2,7 @@
 
 ## Authentication & sessions
 - Passwords hashed with **argon2id** (19 MiB, t=2). Timing is equalised for unknown accounts.
-- 5 failed logins lock the account for 15 minutes; failures and logins are audited.
+- 5 failed logins lock the account for 15 minutes; failures and logins are audited. Each attempt is reserved atomically before the password is checked, so parallel requests cannot get more than 5 guesses per lock window; a correct password resets the count. The login forms never resend credentials that were just rejected (pressing Enter repeatedly does not use up attempts). Locks are cleared by a password reset, an admin "Set password", or re-activating the user.
 - Access token: HS256 JWT, 15 minutes, `httpOnly` + `SameSite=Lax` (+ `Secure` in production — enforced by env validation).
 - Refresh token: 384-bit random, stored as SHA-256 only, cookie path-scoped to `/api/v1/auth`, rotated on each use. Reuse of the previous token after a 20 s grace window revokes the session (theft detection).
 - Password reset / email verification tokens are single-use, hashed and short-lived; reset revokes every session. Forgot-password never reveals whether an account exists.

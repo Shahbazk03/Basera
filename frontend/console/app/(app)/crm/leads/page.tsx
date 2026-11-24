@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Download, Plus, Target, Upload, UserPlus } from 'lucide-react';
+import { Plus, Target, Upload, UserPlus } from 'lucide-react';
 import { formatPriceRange, formatRelative, LEAD_IMPORT_COLUMNS, LEAD_PRIORITIES, enumLabel, type Paginated } from '@estate/shared';
 import { Badge, Button, Card, Checkbox, cn, PageHeader, Pagination, StatusBadge, Table, TBody, TD, TH, THead, TR } from '@estate/ui';
 import { useApi, useListParams } from '@/lib/hooks';
@@ -13,6 +13,7 @@ import { QueryState } from '@/components/query-state';
 import { AssignDialog, CreateLeadDialog, CsvImportDialog } from '@/components/crm/dialogs';
 import { useAssignees, useLeadSources } from '@/components/crm/pickers';
 import type { LeadRow } from '@/components/crm/types';
+import { DownloadButton } from '@/components/download-button';
 
 const TABS = [
   { value: undefined, label: 'All open' },
@@ -70,11 +71,9 @@ export default function LeadsPage() {
               </Button>
             ) : null}
             {can('lead.export') ? (
-              <Button variant="outline" size="sm" asChild>
-                <a href={exportHref}>
-                  <Download /> Export
-                </a>
-              </Button>
+              <DownloadButton size="sm" href={exportHref} fileName="leads.csv">
+                Export
+              </DownloadButton>
             ) : null}
             {can('lead.create') ? (
               <Button size="sm" onClick={() => setCreateOpen(true)}>

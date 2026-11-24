@@ -57,9 +57,10 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
   const [activeOrgId, setActiveOrgState] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const ws = readStorage(WS_KEY) as WorkspaceKey | null;
+    // Remembered per user: different tabs may be signed in to different accounts.
+    const ws = readStorage(`${WS_KEY}:${user.id}`) as WorkspaceKey | null;
     if (ws && user.workspaces.includes(ws)) setWorkspaceState(ws);
-    const org = readStorage(ORG_KEY);
+    const org = readStorage(`${ORG_KEY}:${user.id}`);
     if (org && user.memberships.some((m) => m.organizationId === org)) setActiveOrgState(org);
   }, [user]);
 
@@ -72,6 +73,22 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
     },
     [user],
   );
+
+  // Another tab may have replaced this tab's account (e.g. signed in again as someone else): when the
+  // tab becomes visible, check who the API says this tab is and reload if it changed.
+  React.useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      api
+        .get<SessionUser>('/auth/me')
+        .then((me) => {
+          if (me.id !== user.id) window.location.reload();
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [user.id]);
 
   const effectiveOrgId = React.useMemo(() => {
     if (activeOrgId) {
@@ -90,13 +107,13 @@ export function SessionProvider({ user, children }: { user: SessionUser; childre
       workspace,
       setWorkspace: (ws) => {
         setWorkspaceState(ws);
-        writeStorage(WS_KEY, ws);
+        writeStorage(`${WS_KEY}:${user.id}`, ws);
       },
       activeOrgId: effectiveOrgId,
       activeOrg: user.memberships.find((m) => m.organizationId === effectiveOrgId) ?? null,
       setActiveOrgId: (id) => {
         setActiveOrgState(id);
-        writeStorage(ORG_KEY, id);
+        writeStorage(`${ORG_KEY}:${user.id}`, id);
       },
       isPlatformUser: user.workspaces.includes('admin') || user.workspaces.includes('staff'),
       logout: async () => {

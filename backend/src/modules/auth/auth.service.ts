@@ -115,6 +115,23 @@ export class AuthService {
     throw new UnauthorizedException({ message: 'Session expired', code: 'SESSION_INVALID' });
   }
 
+  /** Whether a refresh token belongs to a live session (decides where a sign-in goes). */
+  async isLiveRefreshToken(refreshToken: string | undefined): Promise<boolean> {
+    if (!refreshToken) return false;
+    const s = await this.prisma.session.findUnique({ where: { refreshTokenHash: sha256(refreshToken) }, select: { revokedAt: true, expiresAt: true } });
+    return Boolean(s && !s.revokedAt && s.expiresAt > new Date());
+  }
+
+  /** Revokes the sessions behind these refresh tokens (replaced or evicted tab accounts, sign out of all). */
+  async revokeRefreshTokens(tokens: (string | undefined)[], reason: string): Promise<void> {
+    const hashes = tokens.filter((t): t is string => Boolean(t)).map(sha256);
+    if (!hashes.length) return;
+    const sessions = await this.prisma.session.findMany({ where: { refreshTokenHash: { in: hashes }, revokedAt: null }, select: { id: true } });
+    if (!sessions.length) return;
+    await this.prisma.session.updateMany({ where: { id: { in: sessions.map((x) => x.id) }, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: reason } });
+    for (const x of sessions) this.authContext.invalidateSession(x.id);
+  }
+
   async logout(sessionId: string | null, refreshToken: string | undefined): Promise<void> {
     const where = sessionId ? { id: sessionId } : refreshToken ? { refreshTokenHash: sha256(refreshToken) } : null;
     if (!where) return;
@@ -138,29 +155,65 @@ export class AuthService {
       await verifyPassword(await dummyPasswordHash(), password); // equalise timing
       throw invalid();
     }
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
-      throw new ForbiddenException({ message: `Too many failed attempts. Try again after ${user.lockedUntil.toISOString()}`, code: 'ACCOUNT_LOCKED' });
-    }
+    await this.reservePasswordGuess(user.id, meta.ip);
     const ok = await verifyPassword(user.passwordHash, password);
     if (!ok) {
-      const failed = user.failedLoginCount + 1;
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { failedLoginCount: failed >= MAX_FAILED_LOGINS ? 0 : failed, lockedUntil: failed >= MAX_FAILED_LOGINS ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null },
-      });
-      await this.audit.log({ actorId: user.id, actorIp: meta.ip, action: 'auth.login_failed', entityType: 'User', entityId: user.id, metadata: { failed } });
+      // The guess stays counted; whichever failed guess reaches the limit starts the lock.
+      const locked = await this.lockIfLimitReached(user.id, meta.ip);
+      await this.audit.log({ actorId: user.id, actorIp: meta.ip, action: 'auth.login_failed', entityType: 'User', entityId: user.id, metadata: { locked } });
       throw invalid();
     }
+    // The right password proves who this is: clear the failure count (including this attempt).
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { failedLoginCount: 0, lockedUntil: null, ...(user.status === 'ACTIVE' ? { lastLoginAt: new Date() } : {}) },
+    });
     if (user.status !== 'ACTIVE') {
       throw new ForbiddenException({ message: 'This account is not active. Contact support.', code: 'ACCOUNT_INACTIVE' });
     }
-    await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() } });
     const tokens = await this.createSession(user.id, meta);
     await this.audit.log({ actorId: user.id, actorIp: meta.ip, action: 'auth.login', entityType: 'User', entityId: user.id });
     return tokens;
   }
 
   // ───────────────────────── Registration ─────────────────────────
+
+  /**
+   * Reserves one password guess for this account BEFORE the password is checked, in one atomic
+   * conditional update: however many requests arrive in parallel, an account gets at most
+   * MAX_FAILED_LOGINS guesses per lock window. Throws ACCOUNT_LOCKED when no guess is left.
+   */
+  private async reservePasswordGuess(userId: string, actorIp: string | null): Promise<void> {
+    const now = new Date();
+    const reserved = await this.prisma.user.updateMany({
+      where: { id: userId, failedLoginCount: { lt: MAX_FAILED_LOGINS }, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
+      data: { failedLoginCount: { increment: 1 }, lockedUntil: null },
+    });
+    if (!reserved.count) throw await this.accountLocked(userId, actorIp);
+  }
+
+  /** Starts the lock when failed guesses reached the limit (idempotent across parallel requests); audited. */
+  private async lockIfLimitReached(userId: string, actorIp: string | null): Promise<boolean> {
+    const res = await this.prisma.user.updateMany({
+      where: { id: userId, failedLoginCount: { gte: MAX_FAILED_LOGINS } },
+      data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCK_MINUTES * 60_000) },
+    });
+    if (res.count) await this.audit.log({ actorId: userId, actorIp, action: 'auth.account_locked', entityType: 'User', entityId: userId, metadata: { minutes: LOCK_MINUTES } });
+    return res.count > 0;
+  }
+
+  /** The error for a guess that could not be reserved: the account is locked (or about to be). */
+  private async accountLocked(userId: string, actorIp: string | null): Promise<ForbiddenException> {
+    await this.lockIfLimitReached(userId, actorIp); // limit reached by guesses still in flight
+    const current = await this.prisma.user.findUnique({ where: { id: userId }, select: { lockedUntil: true } });
+    const now = Date.now();
+    const until = current?.lockedUntil && current.lockedUntil.getTime() > now ? current.lockedUntil.getTime() : now + LOCK_MINUTES * 60_000;
+    const minutes = Math.min(LOCK_MINUTES, Math.max(1, Math.ceil((until - now) / 60_000)));
+    return new ForbiddenException({
+      message: `Too many failed attempts. For your security, sign-in is paused for ${minutes} minute${minutes === 1 ? '' : 's'}. You can also reset your password with “Forgot password?”.`,
+      code: 'ACCOUNT_LOCKED',
+    });
+  }
 
   private async assertIdentityAvailable(email: string, phone: string | null, db: Tx | PrismaService = this.prisma): Promise<void> {
     const existing = await db.user.findFirst({ where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] }, select: { email: true, phone: true } });
@@ -373,15 +426,31 @@ export class AuthService {
 
   async changePassword(user: AuthUser, input: z.output<typeof changePasswordSchema>, meta: RequestMeta): Promise<void> {
     const row = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    if (!row.passwordHash || !(await verifyPassword(row.passwordHash, input.currentPassword))) {
-      throw new BadRequestException({ message: 'Current password is incorrect', details: [{ path: 'currentPassword', message: 'Incorrect password' }] });
-    }
+    // Compared before the password check, so this answer reveals nothing about the current password.
     if (input.currentPassword === input.newPassword) {
       throw new BadRequestException({ message: 'Choose a password different from the current one', details: [{ path: 'newPassword', message: 'Same as the current password' }] });
     }
+    if (!row.passwordHash) {
+      throw new BadRequestException({ message: 'Current password is incorrect', details: [{ path: 'currentPassword', message: 'Incorrect password' }] });
+    }
+    // A guess budget per SESSION (not the account-wide sign-in lock, which outsiders can trigger): a stolen
+    // session gets MAX_FAILED_LOGINS guesses at the current password, then it is signed out.
+    const reserved = await this.prisma.session.updateMany({
+      where: { id: user.sessionId, revokedAt: null, OR: [{ passwordChecks: { lt: MAX_FAILED_LOGINS } }, { passwordChecks: { isSet: false } }] },
+      data: { passwordChecks: { increment: 1 } },
+    });
+    if (!reserved.count) {
+      await this.logout(user.sessionId, undefined);
+      throw new UnauthorizedException({ message: 'Too many incorrect current-password attempts. Sign in again.', code: 'SESSION_INVALID' });
+    }
+    if (!(await verifyPassword(row.passwordHash, input.currentPassword))) {
+      await this.audit.log({ actorId: user.id, actorIp: meta.ip, action: 'auth.password_change_failed', entityType: 'User', entityId: user.id });
+      throw new BadRequestException({ message: 'Current password is incorrect', details: [{ path: 'currentPassword', message: 'Incorrect password' }] });
+    }
+    await this.prisma.session.update({ where: { id: user.sessionId }, data: { passwordChecks: 0 } });
     const now = new Date();
     await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(input.newPassword), passwordChangedAt: now, mustChangePassword: false } }),
+      this.prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(input.newPassword), passwordChangedAt: now, mustChangePassword: false, failedLoginCount: 0, lockedUntil: null } }),
       this.prisma.session.updateMany({ where: { userId: user.id, revokedAt: null, id: { not: user.sessionId } }, data: { revokedAt: now, revokedReason: 'PASSWORD_CHANGED' } }),
     ]);
     this.authContext.invalidateUser(user.id);

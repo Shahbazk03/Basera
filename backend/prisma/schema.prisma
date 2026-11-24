@@ -807,6 +807,8 @@ model Session {
   rotatedAt         DateTime?
   revokedAt         DateTime?
   revokedReason     String?
+  /// Wrong current-password attempts on change-password in this session (it is signed out after 5)
+  passwordChecks    Int?      @default(0)
   createdAt         DateTime  @default(now())
 
   @@index([userId])

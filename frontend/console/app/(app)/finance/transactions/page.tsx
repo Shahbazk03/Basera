@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Activity, ArrowDownLeft, ArrowUpRight, Download, Plus } from 'lucide-react';
+import { Activity, ArrowDownLeft, ArrowUpRight, Plus } from 'lucide-react';
 import { enumLabel, formatDate, formatINR, MANUAL_TRANSACTION_TYPES, PAYMENT_METHODS, TRANSACTION_TYPES, type Paginated, localDateString } from '@estate/shared';
 import { buildQuery, errorMessage } from '@estate/api-client';
 import { Alert, Button, Card, Dialog, DialogContent, DialogFooter, Field, Input, PageHeader, Pagination, Select, Stat, Table, TBody, TD, TH, THead, TR, Textarea, toast } from '@estate/ui';
@@ -11,6 +11,7 @@ import { useApi, useApiMutation, useListParams } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { FilterSelect, SearchBox, Toolbar } from '@/components/list-toolbar';
 import { QueryState } from '@/components/query-state';
+import { DownloadButton } from '@/components/download-button';
 
 interface TxnRow {
   id: string;
@@ -45,11 +46,9 @@ export default function TransactionsPage() {
         description="The company ledger: money actually received or paid. Receipts, payouts, salaries and expense payments are recorded here automatically by their workflows."
         actions={
           <>
-            <Button asChild variant="outline">
-              <a href={exportHref}>
-                <Download /> Export CSV
-              </a>
-            </Button>
+            <DownloadButton href={exportHref} fileName="transactions.csv">
+              Export CSV
+            </DownloadButton>
             {can('finance.manage') ? (
               <Button onClick={() => setOpen(true)}>
                 <Plus /> Record entry

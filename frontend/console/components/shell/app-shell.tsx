@@ -4,7 +4,8 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, UserCircle, X } from 'lucide-react';
+import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, UserCircle, UserPlus, X } from 'lucide-react';
+import { tabSessionsSupported } from '@estate/api-client';
 import {
   Avatar,
   Badge,
@@ -23,6 +24,7 @@ import { useSession } from '@/lib/session';
 import { useApi } from '@/lib/hooks';
 import { visibleNav, WORKSPACE_DESCRIPTIONS, WORKSPACE_LABELS, type NavGroup } from '@/lib/nav';
 import { useBrandName } from '@/lib/brand';
+import { api } from '@/lib/api';
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/';
@@ -142,9 +144,32 @@ function UserMenu() {
             <UserCircle /> Account & security
           </Link>
         </DropdownMenuItem>
+        {tabSessionsSupported() ? (
+          <DropdownMenuItem
+            onSelect={async () => {
+              // Only this tab switches; other tabs keep their accounts.
+              await api.useAnotherAccountInThisTab();
+              window.location.assign('/login');
+            }}
+          >
+            <UserPlus /> Use another account in this tab
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem tone="danger" onSelect={() => void logout()}>
           <LogOut /> Sign out
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          tone="danger"
+          onSelect={async () => {
+            try {
+              await api.signOutEverywhere();
+            } finally {
+              window.location.assign('/login');
+            }
+          }}
+        >
+          <LogOut /> Sign out of all accounts
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

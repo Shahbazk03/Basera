@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
 import { loginSchema, type LoginInput, type SessionUser } from '@estate/shared';
-import { errorMessage } from '@estate/api-client';
+import { ApiError, errorMessage } from '@estate/api-client';
 import { Alert, Button, Field, Input } from '@estate/ui';
 import { api } from '@/lib/api-browser';
 import { consoleUrl } from '@/lib/session';
@@ -19,11 +19,29 @@ function LoginForm() {
   const qc = useQueryClient();
   const [error, setError] = React.useState<string | null>(null);
   const form = useForm<LoginInput>({ resolver: zodResolver(loginSchema), defaultValues: { identifier: '', password: '' } });
+  // Every rejected attempt counts towards the temporary lock, so pressing Enter again (or holding it)
+  // must not resend credentials the server has just rejected, nor send a second request in flight.
+  const inFlight = React.useRef(false);
+  const lastRejected = React.useRef<{ attempt: string; at: number } | null>(null);
+  // Editing either field (or waiting) allows the same pair again — the password may have been reset meanwhile.
+  React.useEffect(() => {
+    const sub = form.watch(() => {
+      lastRejected.current = null;
+    });
+    return () => sub.unsubscribe();
+  }, [form]);
   return (
     <form
       noValidate
       className="flex flex-col gap-5"
       onSubmit={form.handleSubmit(async (values) => {
+        const attempt = `${values.identifier.trim().toLowerCase()}\n${values.password}`;
+        if (inFlight.current) return;
+        if (lastRejected.current?.attempt === attempt && Date.now() - lastRejected.current.at < 30_000) {
+          setError('That email/mobile and password were just rejected. Check the password (is Caps Lock on?) or use “Forgot password?”.');
+          return;
+        }
+        inFlight.current = true;
         setError(null);
         try {
           const res = await api.post<{ user: SessionUser }>('/auth/login', values);
@@ -32,7 +50,10 @@ function LoginForm() {
           router.replace(safeNext(params.get('next')));
           router.refresh();
         } catch (err) {
+          if (err instanceof ApiError && err.code === 'INVALID_CREDENTIALS') lastRejected.current = { attempt, at: Date.now() };
           setError(errorMessage(err));
+        } finally {
+          inFlight.current = false;
         }
       })}
     >

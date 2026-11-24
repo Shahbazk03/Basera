@@ -4,7 +4,8 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { Heart, LayoutDashboard, LogOut, Menu, UserRound, X } from 'lucide-react';
+import { Heart, LayoutDashboard, LogOut, Menu, UserPlus, UserRound, X } from 'lucide-react';
+import { tabSessionsSupported } from '@estate/api-client';
 import {
   Avatar,
   Button,
@@ -18,6 +19,7 @@ import {
   Logo,
 } from '@estate/ui';
 import { consoleUrl, useCurrentUser, useSignOut } from '@/lib/session';
+import { api } from '@/lib/api-browser';
 
 export interface NavLink {
   label: string;
@@ -70,6 +72,17 @@ function AccountMenu() {
             </a>
           </DropdownMenuItem>
         ) : null}
+        {tabSessionsSupported() ? (
+          <DropdownMenuItem
+            onSelect={async () => {
+              // Only this tab switches; other tabs keep their accounts.
+              await api.useAnotherAccountInThisTab();
+              window.location.assign('/login');
+            }}
+          >
+            <UserPlus /> Use another account in this tab
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           tone="danger"
@@ -79,6 +92,18 @@ function AccountMenu() {
           }}
         >
           <LogOut /> Sign out
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          tone="danger"
+          onSelect={async () => {
+            try {
+              await api.signOutEverywhere();
+            } finally {
+              window.location.assign('/');
+            }
+          }}
+        >
+          <LogOut /> Sign out of all accounts
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -5,7 +5,7 @@ import type { PermissionKey } from '@estate/shared';
 import { env } from '../../config/env';
 import { ALLOW_PENDING_PASSWORD_KEY, IS_PUBLIC_KEY, PERMISSIONS_KEY, RequestWithUser } from '../decorators';
 import { AuthContextService } from './auth-context.service';
-import { authCookieNames } from './cookies';
+import { readAccessCookie } from './cookies';
 
 export interface AccessTokenPayload {
   sub: string;
@@ -15,11 +15,11 @@ export interface AccessTokenPayload {
 export const JWT_ISSUER = 'estate-api';
 export const JWT_AUDIENCE = 'estate-clients';
 
+/** Bearer token, else the access cookie of the request's session slot (see cookies.ts). */
 function extractToken(req: RequestWithUser): string | null {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) return header.slice(7).trim() || null;
-  const cookies = (req as unknown as { cookies?: Record<string, string> }).cookies;
-  return cookies?.[authCookieNames(req as never).access] ?? null;
+  return readAccessCookie(req as never) ?? null;
 }
 
 /** Global guard: attaches the principal when a valid access token is present; blocks non-public routes otherwise. */

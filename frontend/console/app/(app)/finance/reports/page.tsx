@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { Download, Info } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { formatINR, formatPriceCompact } from '@estate/shared';
 import { buildQuery } from '@estate/api-client';
 import { Alert, Button, Card, CardBody, CardHeader, Input, PageHeader, Stat, Table, TBody, TD, TH, THead, TR } from '@estate/ui';
 import { useApi, useListParams } from '@/lib/hooks';
 import { QueryState } from '@/components/query-state';
 import { BarList, GroupedColumns, SERIES_1, SERIES_2 } from '@/components/reports/charts';
+import { DownloadButton } from '@/components/download-button';
 
 interface MonthRow {
   month: string;
@@ -61,11 +62,9 @@ export default function FinanceReportsPage() {
         title="Finance reports"
         description="Month-by-month cash movement from the ledger. Revenue is money received against invoices — customer payments on deals go to the builder or owner and are shown separately."
         actions={
-          <Button asChild variant="outline">
-            <a href={exportHref} aria-disabled={invalid}>
-              <Download /> Export CSV
-            </a>
-          </Button>
+          <DownloadButton href={exportHref} fileName="monthly-report.csv" disabled={invalid}>
+            Export CSV
+          </DownloadButton>
         }
       />
       <div className="mb-5 flex flex-wrap items-end gap-3">

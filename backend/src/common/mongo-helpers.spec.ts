@@ -2,7 +2,7 @@ import { TRIGRAM_MATCH_THRESHOLD, trigramSimilarity } from './fuzzy';
 import { enumRank, nullsLast, segmentedPage, sortByEnum } from './ordering';
 import { Prisma } from '@prisma/client';
 import { escapeRegex } from '../prisma/mongo-guards';
-import { ensureDatabaseRules } from '../prisma/database-rules';
+import { ensureDatabaseRules, VALIDATORS } from '../prisma/database-rules';
 
 const Status = { TODO: 'TODO', IN_PROGRESS: 'IN_PROGRESS', DONE: 'DONE', CANCELLED: 'CANCELLED' } as const;
 
@@ -62,10 +62,13 @@ describe('regex escaping for MongoDB text filters', () => {
 
 describe('database rules', () => {
   const ok = { ok: 1 } as unknown as Prisma.JsonObject;
-  const fakeDb = (failCollMod: (cmd: Record<string, unknown>) => Error | null) => ({
+  const ALL = ['properties', 'projects', 'users', 'customers', ...Object.keys(VALIDATORS)];
+  const fakeDb = (failCollMod: (cmd: Record<string, unknown>) => Error | null, collections: string[] = ALL, sent: Record<string, unknown>[] = []) => ({
     $runCommandRaw: (cmd: Record<string, unknown>) => {
+      sent.push(cmd);
       const err = 'collMod' in cmd ? failCollMod(cmd) : null;
-      return (err ? Promise.reject(err) : Promise.resolve('listCollections' in cmd ? { cursor: { firstBatch: [] } } : ok)) as unknown as Prisma.PrismaPromise<Prisma.JsonObject>;
+      const answer = 'listCollections' in cmd ? { cursor: { firstBatch: collections.map((name) => ({ name })) } } : ok;
+      return (err ? Promise.reject(err) : Promise.resolve(answer)) as unknown as Prisma.PrismaPromise<Prisma.JsonObject>;
     },
   });
   const raw = (code: string) => new Prisma.PrismaClientKnownRequestError('Raw query failed', { code: 'P2010', clientVersion: 'test', meta: { code, message: 'x' } });
@@ -79,5 +82,13 @@ describe('database rules', () => {
   it('still fails on other errors', async () => {
     await expect(ensureDatabaseRules(fakeDb(() => raw('2')))).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     expect(await ensureDatabaseRules(fakeDb(() => null))).toEqual([]);
+  });
+
+  it('never creates collections (prisma db push does), it skips missing ones and says so', async () => {
+    const sent: Record<string, unknown>[] = [];
+    const warnings = await ensureDatabaseRules(fakeDb(() => null, [], sent));
+    expect(sent.some((c) => 'create' in c || 'createIndexes' in c || 'collMod' in c)).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/db push/);
   });
 });
