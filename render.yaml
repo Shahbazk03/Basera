@@ -6,7 +6,7 @@ services:
     name: basera-api
     runtime: docker
     region: singapore            # same region as the MongoDB Atlas cluster
-    plan: starter                # "free" works for trying it out, but sleeps when idle (scheduled jobs pause)
+    plan: free                   # no card needed; sleeps after 15 min idle (first visit then takes ~1 min, scheduled jobs pause). "starter" stays on
     dockerfilePath: ./infrastructure/docker/api.render.Dockerfile
     dockerContext: .
     healthCheckPath: /api/v1/health
