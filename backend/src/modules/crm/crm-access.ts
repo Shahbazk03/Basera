@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { PermissionKey } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { AuthUser } from '../../common/auth/auth-user';
 import type { Db } from '../../prisma/prisma.service';
 

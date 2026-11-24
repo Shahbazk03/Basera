@@ -1,24 +1,26 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  Estate platform — PostgreSQL schema (Prisma 7)
+//  Basera — MongoDB schema (Prisma 6.19; Prisma 7 does not support MongoDB yet)
 //  Conventions
-//   • Tables are snake_case plurals (@@map); columns are camelCase (quote in raw SQL).
-//   • UUID v7 primary keys (time-ordered → good index locality).
-//   • Money: numeric(14,2) INR. Areas: numeric(14,2). Rates/percentages: numeric(9,4).
-//   • All instants are timestamptz(3); calendar dates (attendance, leave) are date.
+//   • Collections are snake_case plurals (@@map); fields are camelCase.
+//   • IDs are UUID v7 strings stored in _id (time-ordered, same format the API validates).
+//   • Money and areas are stored as Float (rupees); all arithmetic is done in integer paise
+//     in code (toPaise/fromPaise in @estate/shared) — never add or subtract stored floats directly.
+//   • Instants are Date; calendar dates (attendance, leave, payroll periods) are Date at UTC midnight.
+//   • Relations are enforced by Prisma (no database foreign keys in MongoDB).
+//   • Indexes Prisma cannot declare (2dsphere location, partial uniques on optional fields such as
+//     users.email) are created by IndexesService at start-up.
 //   • Business entities that must never disappear use soft delete (deletedAt).
 //   • Enum values mirror constants in @estate/shared (verified by a unit test).
 // ════════════════════════════════════════════════════════════════════════════
 
 generator client {
-  provider        = "prisma-client"
-  output          = "../src/generated/prisma"
-  moduleFormat    = "cjs"
-  previewFeatures = ["postgresqlExtensions"]
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider   = "postgresql"
-  extensions = [postgis, pg_trgm]
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
 }
 
 // ───────────────────────────── Enums ─────────────────────────────
@@ -698,90 +700,90 @@ enum BillingPeriod {
 // ═════════════════════════ Identity & access ═════════════════════════
 
 model User {
-  id                String      @id @default(uuid(7)) @db.Uuid
-  email             String?     @unique
-  phone             String?     @unique
-  passwordHash      String?
-  fullName          String
-  avatarUrl         String?
-  accountType       AccountType @default(CUSTOMER)
-  status            UserStatus  @default(ACTIVE)
-  emailVerifiedAt   DateTime?   @db.Timestamptz(3)
-  phoneVerifiedAt   DateTime?   @db.Timestamptz(3)
-  lastLoginAt       DateTime?   @db.Timestamptz(3)
-  failedLoginCount  Int         @default(0)
-  lockedUntil       DateTime?   @db.Timestamptz(3)
-  passwordChangedAt DateTime?   @db.Timestamptz(3)
+  id                 String      @id @default(uuid(7)) @map("_id")
+  email              String?
+  phone              String?
+  passwordHash       String?
+  fullName           String
+  avatarUrl          String?
+  accountType        AccountType @default(CUSTOMER)
+  status             UserStatus  @default(ACTIVE)
+  emailVerifiedAt    DateTime?
+  phoneVerifiedAt    DateTime?
+  lastLoginAt        DateTime?
+  failedLoginCount   Int         @default(0)
+  lockedUntil        DateTime?
+  passwordChangedAt  DateTime?
   /// Set when an administrator assigns a temporary password; only auth endpoints work until the user picks their own.
-  mustChangePassword Boolean    @default(false)
-  isDemo            Boolean     @default(false)
-  createdAt         DateTime    @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime    @updatedAt @db.Timestamptz(3)
-  deletedAt         DateTime?   @db.Timestamptz(3)
+  mustChangePassword Boolean     @default(false)
+  isDemo             Boolean     @default(false)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  deletedAt          DateTime?
 
   sessions                Session[]
   verificationTokens      VerificationToken[]
   memberships             OrganizationMember[]
-  userRoles               UserRole[]              @relation("UserRoleUser")
-  grantedRoles            UserRole[]              @relation("UserRoleGrantedBy")
-  verifiedOrganizations   Organization[]          @relation("OrgVerifiedBy")
-  reviewedOrgDocuments    OrganizationDocument[]  @relation("OrgDocReviewedBy")
-  uploadedFiles           StoredFile[]            @relation("FileUploadedBy")
-  listedProperties        Property[]              @relation("PropertyListedBy")
-  propertyStatusChanges   PropertyStatusHistory[] @relation("PropertyStatusChangedBy")
+  userRoles               UserRole[]                 @relation("UserRoleUser")
+  grantedRoles            UserRole[]                 @relation("UserRoleGrantedBy")
+  verifiedOrganizations   Organization[]             @relation("OrgVerifiedBy")
+  reviewedOrgDocuments    OrganizationDocument[]     @relation("OrgDocReviewedBy")
+  uploadedFiles           StoredFile[]               @relation("FileUploadedBy")
+  listedProperties        Property[]                 @relation("PropertyListedBy")
+  propertyStatusChanges   PropertyStatusHistory[]    @relation("PropertyStatusChangedBy")
   favourites              PropertyFavourite[]
-  propertyReports         PropertyReport[]        @relation("PropertyReportReporter")
-  resolvedPropertyReports PropertyReport[]        @relation("PropertyReportResolver")
+  propertyReports         PropertyReport[]           @relation("PropertyReportReporter")
+  resolvedPropertyReports PropertyReport[]           @relation("PropertyReportResolver")
   brokerProfile           BrokerProfile?
-  createdProjects         Project[]               @relation("ProjectCreatedBy")
-  projectStatusChanges    ProjectStatusHistory[]  @relation("ProjectStatusChangedBy")
+  createdProjects         Project[]                  @relation("ProjectCreatedBy")
+  projectStatusChanges    ProjectStatusHistory[]     @relation("ProjectStatusChangedBy")
   projectTeams            ProjectTeamMember[]
-  unitStatusChanges       UnitStatusHistory[]     @relation("UnitStatusChangedBy")
-  unitReservations        UnitReservation[]       @relation("UnitReservedBy")
-  createdDomains          ProjectDomain[]         @relation("DomainCreatedBy")
-  publishedPages          ProjectPage[]           @relation("PagePublishedBy")
-  pageRevisions           ProjectPageRevision[]   @relation("PageRevisionBy")
-  customerRecords         Customer[]              @relation("CustomerUser")
-  assignedLeads           Lead[]                  @relation("LeadAssignedTo")
-  createdLeads            Lead[]                  @relation("LeadCreatedBy")
-  leadAssignmentsReceived LeadAssignment[]        @relation("AssignmentAssignee")
-  leadAssignmentsMade     LeadAssignment[]        @relation("AssignmentAssigner")
-  managedSalesTeams       SalesTeam[]             @relation("SalesTeamManager")
+  unitStatusChanges       UnitStatusHistory[]        @relation("UnitStatusChangedBy")
+  unitReservations        UnitReservation[]          @relation("UnitReservedBy")
+  createdDomains          ProjectDomain[]            @relation("DomainCreatedBy")
+  publishedPages          ProjectPage[]              @relation("PagePublishedBy")
+  pageRevisions           ProjectPageRevision[]      @relation("PageRevisionBy")
+  customerRecords         Customer[]                 @relation("CustomerUser")
+  assignedLeads           Lead[]                     @relation("LeadAssignedTo")
+  createdLeads            Lead[]                     @relation("LeadCreatedBy")
+  leadAssignmentsReceived LeadAssignment[]           @relation("AssignmentAssignee")
+  leadAssignmentsMade     LeadAssignment[]           @relation("AssignmentAssigner")
+  managedSalesTeams       SalesTeam[]                @relation("SalesTeamManager")
   salesTeamMemberships    SalesTeamMember[]
-  leadActivities          LeadActivity[]          @relation("ActivityPerformer")
-  followUpsAssigned       LeadFollowUp[]          @relation("FollowUpAssignee")
-  followUpsCreated        LeadFollowUp[]          @relation("FollowUpCreator")
-  siteVisitsAssigned      SiteVisit[]             @relation("SiteVisitAssignee")
-  siteVisitsCreated       SiteVisit[]             @relation("SiteVisitCreator")
-  dealsAsSales            Deal[]                  @relation("DealSalesUser")
-  dealsCreated            Deal[]                  @relation("DealCreatedBy")
-  dealPaymentsRecorded    DealPayment[]           @relation("DealPaymentRecorder")
+  leadActivities          LeadActivity[]             @relation("ActivityPerformer")
+  followUpsAssigned       LeadFollowUp[]             @relation("FollowUpAssignee")
+  followUpsCreated        LeadFollowUp[]             @relation("FollowUpCreator")
+  siteVisitsAssigned      SiteVisit[]                @relation("SiteVisitAssignee")
+  siteVisitsCreated       SiteVisit[]                @relation("SiteVisitCreator")
+  dealsAsSales            Deal[]                     @relation("DealSalesUser")
+  dealsCreated            Deal[]                     @relation("DealCreatedBy")
+  dealPaymentsRecorded    DealPayment[]              @relation("DealPaymentRecorder")
   employee                Employee?
-  employeeDocsUploaded    EmployeeDocument[]      @relation("EmpDocUploader")
-  attendanceReviews       AttendanceCorrection[]  @relation("AttCorrectionReviewer")
-  leaveApprovals          LeaveRequest[]          @relation("LeaveApprover")
-  tasksAssigned           EmployeeTask[]          @relation("TaskAssignee")
-  tasksCreated            EmployeeTask[]          @relation("TaskCreator")
-  salaryStructuresCreated SalaryStructure[]       @relation("SalaryStructureCreator")
-  payrollRunsCreated      PayrollRun[]            @relation("PayrollCreatedBy")
-  payrollRunsCalculated   PayrollRun[]            @relation("PayrollCalculatedBy")
-  payrollRunsApproved     PayrollRun[]            @relation("PayrollApprovedBy")
-  salaryPaymentsRecorded  SalaryPayment[]         @relation("SalaryPaymentRecorder")
-  adjustmentsCreated      PayrollAdjustment[]     @relation("AdjustmentCreator")
-  commissionsReceived     CommissionRecord[]      @relation("CommissionRecipientUser")
-  commissionsApproved     CommissionRecord[]      @relation("CommissionApprover")
-  payoutsReceived         CommissionPayout[]      @relation("PayoutRecipientUser")
-  payoutsRecorded         CommissionPayout[]      @relation("PayoutRecorder")
-  transactionsRecorded    FinanceTransaction[]    @relation("TxnRecorder")
-  expensesCreated         Expense[]               @relation("ExpenseCreator")
-  expensesApproved        Expense[]               @relation("ExpenseApprover")
-  invoicesCreated         Invoice[]               @relation("InvoiceCreator")
-  reimbursementsApproved  Reimbursement[]         @relation("ReimbursementApprover")
-  cmsPagesUpdated         CmsPage[]               @relation("CmsPageUpdater")
+  employeeDocsUploaded    EmployeeDocument[]         @relation("EmpDocUploader")
+  attendanceReviews       AttendanceCorrection[]     @relation("AttCorrectionReviewer")
+  leaveApprovals          LeaveRequest[]             @relation("LeaveApprover")
+  tasksAssigned           EmployeeTask[]             @relation("TaskAssignee")
+  tasksCreated            EmployeeTask[]             @relation("TaskCreator")
+  salaryStructuresCreated SalaryStructure[]          @relation("SalaryStructureCreator")
+  payrollRunsCreated      PayrollRun[]               @relation("PayrollCreatedBy")
+  payrollRunsCalculated   PayrollRun[]               @relation("PayrollCalculatedBy")
+  payrollRunsApproved     PayrollRun[]               @relation("PayrollApprovedBy")
+  salaryPaymentsRecorded  SalaryPayment[]            @relation("SalaryPaymentRecorder")
+  adjustmentsCreated      PayrollAdjustment[]        @relation("AdjustmentCreator")
+  commissionsReceived     CommissionRecord[]         @relation("CommissionRecipientUser")
+  commissionsApproved     CommissionRecord[]         @relation("CommissionApprover")
+  payoutsReceived         CommissionPayout[]         @relation("PayoutRecipientUser")
+  payoutsRecorded         CommissionPayout[]         @relation("PayoutRecorder")
+  transactionsRecorded    FinanceTransaction[]       @relation("TxnRecorder")
+  expensesCreated         Expense[]                  @relation("ExpenseCreator")
+  expensesApproved        Expense[]                  @relation("ExpenseApprover")
+  invoicesCreated         Invoice[]                  @relation("InvoiceCreator")
+  reimbursementsApproved  Reimbursement[]            @relation("ReimbursementApprover")
+  cmsPagesUpdated         CmsPage[]                  @relation("CmsPageUpdater")
   notifications           Notification[]
-  communications          CommunicationLog[]      @relation("CommRecipient")
-  auditLogs               AuditLog[]              @relation("AuditActor")
-  settingsUpdated         SystemSetting[]         @relation("SettingUpdater")
+  communications          CommunicationLog[]         @relation("CommRecipient")
+  auditLogs               AuditLog[]                 @relation("AuditActor")
+  settingsUpdated         SystemSetting[]            @relation("SettingUpdater")
   subscriptionsCreated    OrganizationSubscription[] @relation("SubscriptionCreatedBy")
 
   @@index([accountType, status])
@@ -789,23 +791,23 @@ model User {
 }
 
 model Session {
-  id               String    @id @default(uuid(7)) @db.Uuid
-  userId           String    @db.Uuid
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String    @id @default(uuid(7)) @map("_id")
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Groups sessions created from the same device/login flow
-  familyId         String    @db.Uuid
+  familyId          String
   /// SHA-256 of the current refresh token (rotated on every refresh)
-  refreshTokenHash String    @unique
+  refreshTokenHash  String    @unique
   /// SHA-256 of the previous refresh token — presenting it after the grace window revokes the session (theft detection)
   previousTokenHash String?
-  userAgent        String?
-  ipAddress        String?
-  expiresAt        DateTime  @db.Timestamptz(3)
-  lastUsedAt       DateTime? @db.Timestamptz(3)
-  rotatedAt        DateTime? @db.Timestamptz(3)
-  revokedAt        DateTime? @db.Timestamptz(3)
-  revokedReason    String?
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  userAgent         String?
+  ipAddress         String?
+  expiresAt         DateTime
+  lastUsedAt        DateTime?
+  rotatedAt         DateTime?
+  revokedAt         DateTime?
+  revokedReason     String?
+  createdAt         DateTime  @default(now())
 
   @@index([userId])
   @@index([familyId])
@@ -814,17 +816,17 @@ model Session {
 }
 
 model VerificationToken {
-  id         String                @id @default(uuid(7)) @db.Uuid
-  userId     String?               @db.Uuid
+  id         String                @id @default(uuid(7)) @map("_id")
+  userId     String?
   user       User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   type       VerificationTokenType
   /// Email address or phone number the token was sent to
   target     String
   tokenHash  String
   attempts   Int                   @default(0)
-  expiresAt  DateTime              @db.Timestamptz(3)
-  consumedAt DateTime?             @db.Timestamptz(3)
-  createdAt  DateTime              @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime              @default(now())
 
   @@index([target, type])
   @@index([tokenHash])
@@ -832,38 +834,38 @@ model VerificationToken {
 }
 
 model Organization {
-  id                 String             @id @default(uuid(7)) @db.Uuid
-  name               String
-  slug               String             @unique
-  type               OrganizationType
-  status             OrganizationStatus @default(PENDING)
-  verificationStatus VerificationStatus @default(UNVERIFIED)
-  legalName          String?
-  email              String?
-  phone              String?
-  whatsappNumber     String?
-  website            String?
-  logoUrl            String?
-  description        String?
-  addressLine        String?
-  cityId             String?            @db.Uuid
-  city               City?              @relation(fields: [cityId], references: [id])
-  pincode            String?
-  gstin              String?
-  panNumber          String?
-  reraRegistrationNo String?
+  id                  String             @id @default(uuid(7)) @map("_id")
+  name                String
+  slug                String             @unique
+  type                OrganizationType
+  status              OrganizationStatus @default(PENDING)
+  verificationStatus  VerificationStatus @default(UNVERIFIED)
+  legalName           String?
+  email               String?
+  phone               String?
+  whatsappNumber      String?
+  website             String?
+  logoUrl             String?
+  description         String?
+  addressLine         String?
+  cityId              String?
+  city                City?              @relation(fields: [cityId], references: [id])
+  pincode             String?
+  gstin               String?
+  panNumber           String?
+  reraRegistrationNo  String?
   /// Whether this organisation's projects can be published without platform review
-  projectPublishMode ProjectPublishMode @default(REQUIRES_APPROVAL)
+  projectPublishMode  ProjectPublishMode @default(REQUIRES_APPROVAL)
   /// Whether customers may see the organisation's direct contact details on listings
-  showContactPublicly Boolean           @default(false)
-  verifiedAt         DateTime?          @db.Timestamptz(3)
-  verifiedById       String?            @db.Uuid
-  verifiedBy         User?              @relation("OrgVerifiedBy", fields: [verifiedById], references: [id])
-  rejectionReason    String?
-  isDemo             Boolean            @default(false)
-  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
-  deletedAt          DateTime?          @db.Timestamptz(3)
+  showContactPublicly Boolean            @default(false)
+  verifiedAt          DateTime?
+  verifiedById        String?
+  verifiedBy          User?              @relation("OrgVerifiedBy", fields: [verifiedById], references: [id])
+  rejectionReason     String?
+  isDemo              Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  deletedAt           DateTime?
 
   members               OrganizationMember[]
   userRoles             UserRole[]
@@ -913,16 +915,16 @@ model Organization {
 }
 
 model OrganizationMember {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String       @db.Uuid
+  userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   title          String?
   isOwner        Boolean      @default(false)
   status         MemberStatus @default(ACTIVE)
-  joinedAt       DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  joinedAt       DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@unique([organizationId, userId])
   @@index([userId])
@@ -930,14 +932,14 @@ model OrganizationMember {
 }
 
 model Role {
-  id          String           @id @default(uuid(7)) @db.Uuid
-  key         String           @unique
+  id          String    @id @default(uuid(7)) @map("_id")
+  key         String    @unique
   name        String
   description String?
-  scope       RoleScope        @default(PLATFORM)
-  isSystem    Boolean          @default(false)
-  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+  scope       RoleScope @default(PLATFORM)
+  isSystem    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   permissions RolePermission[]
   userRoles   UserRole[]
@@ -946,8 +948,8 @@ model Role {
 }
 
 model Permission {
-  id          String           @id @default(uuid(7)) @db.Uuid
-  key         String           @unique
+  id          String @id @default(uuid(7)) @map("_id")
+  key         String @unique
   description String
   group       String
 
@@ -957,27 +959,28 @@ model Permission {
 }
 
 model RolePermission {
-  roleId       String     @db.Uuid
+  id           String     @id @default(uuid(7)) @map("_id")
+  roleId       String
   role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permissionId String     @db.Uuid
+  permissionId String
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
-  @@id([roleId, permissionId])
+  @@unique([roleId, permissionId])
   @@map("role_permissions")
 }
 
 /// A role grant. organizationId NULL = platform-wide grant; otherwise the grant applies to that organisation only.
 model UserRole {
-  id             String        @id @default(uuid(7)) @db.Uuid
-  userId         String        @db.Uuid
+  id             String        @id @default(uuid(7)) @map("_id")
+  userId         String
   user           User          @relation("UserRoleUser", fields: [userId], references: [id], onDelete: Cascade)
-  roleId         String        @db.Uuid
+  roleId         String
   role           Role          @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  organizationId String?       @db.Uuid
+  organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  grantedById    String?       @db.Uuid
+  grantedById    String?
   grantedBy      User?         @relation("UserRoleGrantedBy", fields: [grantedById], references: [id])
-  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime      @default(now())
 
   @@unique([userId, roleId, organizationId])
   @@index([organizationId])
@@ -985,19 +988,19 @@ model UserRole {
 }
 
 model OrganizationDocument {
-  id             String          @id @default(uuid(7)) @db.Uuid
-  organizationId String          @db.Uuid
+  id             String          @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   docType        OrgDocumentType
   title          String
-  fileId         String          @db.Uuid
+  fileId         String
   file           StoredFile      @relation(fields: [fileId], references: [id])
   status         ApprovalStatus  @default(PENDING)
   reviewNote     String?
-  reviewedById   String?         @db.Uuid
+  reviewedById   String?
   reviewedBy     User?           @relation("OrgDocReviewedBy", fields: [reviewedById], references: [id])
-  reviewedAt     DateTime?       @db.Timestamptz(3)
-  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  reviewedAt     DateTime?
+  createdAt      DateTime        @default(now())
 
   @@index([organizationId])
   @@map("organization_documents")
@@ -1005,7 +1008,7 @@ model OrganizationDocument {
 
 /// Registry of every uploaded object. PRIVATE files are only reachable through short-lived signed URLs.
 model StoredFile {
-  id             String         @id @default(uuid(7)) @db.Uuid
+  id             String         @id @default(uuid(7)) @map("_id")
   storageKey     String         @unique
   visibility     FileVisibility
   fileName       String
@@ -1015,12 +1018,12 @@ model StoredFile {
   width          Int?
   height         Int?
   purpose        String
-  uploadedById   String?        @db.Uuid
+  uploadedById   String?
   uploadedBy     User?          @relation("FileUploadedBy", fields: [uploadedById], references: [id])
-  organizationId String?        @db.Uuid
+  organizationId String?
   organization   Organization?  @relation(fields: [organizationId], references: [id])
-  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
-  deletedAt      DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now())
+  deletedAt      DateTime?
 
   orgDocuments      OrganizationDocument[]
   propertyDocuments PropertyDocument[]
@@ -1037,10 +1040,10 @@ model StoredFile {
 // ═════════════════════════ Locations ═════════════════════════
 
 model Country {
-  id        String   @id @default(uuid(7)) @db.Uuid
+  id        String   @id @default(uuid(7)) @map("_id")
   name      String
   code      String   @unique
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt DateTime @default(now())
 
   states State[]
 
@@ -1048,14 +1051,14 @@ model Country {
 }
 
 model State {
-  id        String   @id @default(uuid(7)) @db.Uuid
-  countryId String   @db.Uuid
+  id        String   @id @default(uuid(7)) @map("_id")
+  countryId String
   country   Country  @relation(fields: [countryId], references: [id])
   name      String
   slug      String
   code      String?
   isActive  Boolean  @default(true)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt DateTime @default(now())
 
   cities     City[]
   properties Property[]
@@ -1066,19 +1069,19 @@ model State {
 }
 
 model City {
-  id          String   @id @default(uuid(7)) @db.Uuid
-  stateId     String   @db.Uuid
-  state       State    @relation(fields: [stateId], references: [id])
-  name        String
-  slug        String   @unique
-  latitude    Decimal? @db.Decimal(9, 6)
-  longitude   Decimal? @db.Decimal(9, 6)
+  id         String   @id @default(uuid(7)) @map("_id")
+  stateId    String
+  state      State    @relation(fields: [stateId], references: [id])
+  name       String
+  slug       String   @unique
+  latitude   Float?
+  longitude  Float?
   /// Only active cities are offered in the marketplace (multi-city expansion switch)
-  isActive    Boolean  @default(true)
-  isFeatured  Boolean  @default(false)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  isActive   Boolean  @default(true)
+  isFeatured Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   localities          Locality[]
   properties          Property[]
@@ -1088,31 +1091,29 @@ model City {
   customerPreferences CustomerPreference[]
   commissionRules     CommissionRule[]
 
-  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("cities")
 }
 
 model Locality {
-  id          String   @id @default(uuid(7)) @db.Uuid
-  cityId      String   @db.Uuid
+  id          String   @id @default(uuid(7)) @map("_id")
+  cityId      String
   city        City     @relation(fields: [cityId], references: [id])
   name        String
   slug        String
   pincode     String?
-  latitude    Decimal? @db.Decimal(9, 6)
-  longitude   Decimal? @db.Decimal(9, 6)
+  latitude    Float?
+  longitude   Float?
   description String?
   isPopular   Boolean  @default(false)
   isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   properties Property[]
   projects   Project[]
   leads      Lead[]
 
   @@unique([cityId, slug])
-  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([pincode])
   @@map("localities")
 }
@@ -1121,7 +1122,7 @@ model Locality {
 
 /// Admin-managed property types (dynamic categories) grouped under a fixed segment.
 model PropertyType {
-  id          String          @id @default(uuid(7)) @db.Uuid
+  id          String          @id @default(uuid(7)) @map("_id")
   segment     PropertySegment
   name        String
   slug        String          @unique
@@ -1132,8 +1133,8 @@ model PropertyType {
   allowRent   Boolean         @default(true)
   sortOrder   Int             @default(0)
   isActive    Boolean         @default(true)
-  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime        @updatedAt @db.Timestamptz(3)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   properties      Property[]
   commissionRules CommissionRule[]
@@ -1143,17 +1144,17 @@ model PropertyType {
 }
 
 model Amenity {
-  id        String   @id @default(uuid(7)) @db.Uuid
-  name      String
-  slug      String   @unique
+  id            String   @id @default(uuid(7)) @map("_id")
+  name          String
+  slug          String   @unique
   /// Lucide icon name rendered by the UI
-  icon      String?
-  category  String   @default("General")
-  forProperties Boolean @default(true)
-  forProjects   Boolean @default(true)
-  sortOrder Int      @default(0)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  icon          String?
+  category      String   @default("General")
+  forProperties Boolean  @default(true)
+  forProjects   Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
 
   properties PropertyAmenity[]
   projects   ProjectAmenity[]
@@ -1164,104 +1165,104 @@ model Amenity {
 // ═════════════════════════ Marketplace: properties ═════════════════════════
 
 model Property {
-  id              String           @id @default(uuid(7)) @db.Uuid
-  referenceCode   String           @unique
-  slug            String           @unique
-  title           String
-  description     String
-  propertyTypeId  String           @db.Uuid
-  propertyType    PropertyType     @relation(fields: [propertyTypeId], references: [id])
-  segment         PropertySegment
-  listingType     ListingType
-  sourceType      ListingSource
-  organizationId  String           @db.Uuid
-  organization    Organization     @relation(fields: [organizationId], references: [id])
-  listedById      String           @db.Uuid
-  listedBy        User             @relation("PropertyListedBy", fields: [listedById], references: [id])
-  projectId       String?          @db.Uuid
-  project         Project?         @relation(fields: [projectId], references: [id])
+  id             String          @id @default(uuid(7)) @map("_id")
+  referenceCode  String          @unique
+  slug           String          @unique
+  title          String
+  description    String
+  propertyTypeId String
+  propertyType   PropertyType    @relation(fields: [propertyTypeId], references: [id])
+  segment        PropertySegment
+  listingType    ListingType
+  sourceType     ListingSource
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  listedById     String
+  listedBy       User            @relation("PropertyListedBy", fields: [listedById], references: [id])
+  projectId      String?
+  project        Project?        @relation(fields: [projectId], references: [id])
   /// Private owner contact (never exposed publicly)
-  ownerName       String?
-  ownerPhone      String?
-  ownerEmail      String?
+  ownerName      String?
+  ownerPhone     String?
+  ownerEmail     String?
 
   // Location
-  stateId         String           @db.Uuid
-  state           State            @relation(fields: [stateId], references: [id])
-  cityId          String           @db.Uuid
-  city            City             @relation(fields: [cityId], references: [id])
-  localityId      String           @db.Uuid
-  locality        Locality         @relation(fields: [localityId], references: [id])
-  addressLine     String?
-  landmark        String?
-  pincode         String?
-  latitude        Decimal?         @db.Decimal(9, 6)
-  longitude       Decimal?         @db.Decimal(9, 6)
+  stateId           String
+  state             State    @relation(fields: [stateId], references: [id])
+  cityId            String
+  city              City     @relation(fields: [cityId], references: [id])
+  localityId        String
+  locality          Locality @relation(fields: [localityId], references: [id])
+  addressLine       String?
+  landmark          String?
+  pincode           String?
+  latitude          Float?
+  longitude         Float?
   /// Maintained by trigger from latitude/longitude (PostGIS)
-  location        Unsupported("geography(Point, 4326)")?
+  location          Json? // GeoJSON Point { type, coordinates: [lng, lat] } — 2dsphere index by IndexesService
   /// Hide the exact address/pin publicly (only locality shown)
-  hideExactLocation Boolean        @default(false)
+  hideExactLocation Boolean  @default(false)
 
   // Size & price
-  area            Decimal          @db.Decimal(14, 2)
-  areaUnit        AreaUnit
+  area               Float
+  areaUnit           AreaUnit
   /// Area normalised to square feet for search/sort
-  areaSqft        Decimal          @db.Decimal(16, 2)
-  carpetAreaSqft  Decimal?         @db.Decimal(14, 2)
-  builtUpAreaSqft Decimal?         @db.Decimal(14, 2)
-  superAreaSqft   Decimal?         @db.Decimal(14, 2)
-  plotAreaSqft    Decimal?         @db.Decimal(16, 2)
+  areaSqft           Float
+  carpetAreaSqft     Float?
+  builtUpAreaSqft    Float?
+  superAreaSqft      Float?
+  plotAreaSqft       Float?
   /// Sale price, or monthly rent for RENT listings
-  price           Decimal          @db.Decimal(14, 2)
-  pricePerSqft    Decimal?         @db.Decimal(14, 2)
-  priceNegotiable Boolean          @default(false)
-  maintenanceMonthly Decimal?      @db.Decimal(12, 2)
-  securityDeposit Decimal?         @db.Decimal(14, 2)
-  bookingAmount   Decimal?         @db.Decimal(14, 2)
+  price              Float
+  pricePerSqft       Float?
+  priceNegotiable    Boolean  @default(false)
+  maintenanceMonthly Float?
+  securityDeposit    Float?
+  bookingAmount      Float?
 
   // Category-specific core attributes (applicability defined by FormProfile)
-  bedrooms        Int?
-  bathrooms       Int?
-  balconies       Int?
-  furnishing      Furnishing?
-  floorNumber     Int?
-  totalFloors     Int?
-  facing          Facing?
-  possessionStatus PossessionStatus?
-  availableFrom   DateTime?        @db.Date
-  ageYears        Int?
-  plotLengthFt    Decimal?         @db.Decimal(10, 2)
-  plotWidthFt     Decimal?         @db.Decimal(10, 2)
-  roadWidthFt     Decimal?         @db.Decimal(8, 2)
-  isCornerPlot    Boolean?
-  ownershipType   OwnershipType?
+  bedrooms          Int?
+  bathrooms         Int?
+  balconies         Int?
+  furnishing        Furnishing?
+  floorNumber       Int?
+  totalFloors       Int?
+  facing            Facing?
+  possessionStatus  PossessionStatus?
+  availableFrom     DateTime?
+  ageYears          Int?
+  plotLengthFt      Float?
+  plotWidthFt       Float?
+  roadWidthFt       Float?
+  isCornerPlot      Boolean?
+  ownershipType     OwnershipType?
   approvalAuthority String?
-  reraNumber      String?
-  coveredParking  Int?
-  openParking     Int?
+  reraNumber        String?
+  coveredParking    Int?
+  openParking       Int?
   /// Validated profile-specific extras (e.g. soil type, power load)
-  attributes      Json             @default("{}")
-  highlights      String[]         @default([])
+  attributes        Json              @default("{}")
+  highlights        String[]          @default([])
 
   // Lifecycle
-  status            PropertyStatus     @default(DRAFT)
+  status             PropertyStatus     @default(DRAFT)
   verificationStatus VerificationStatus @default(UNVERIFIED)
-  availability      Availability       @default(AVAILABLE)
-  rejectionReason   String?
-  isFeatured        Boolean            @default(false)
-  featuredUntil     DateTime?          @db.Timestamptz(3)
-  submittedAt       DateTime?          @db.Timestamptz(3)
-  approvedAt        DateTime?          @db.Timestamptz(3)
-  publishedAt       DateTime?          @db.Timestamptz(3)
-  expiresAt         DateTime?          @db.Timestamptz(3)
-  closedAt          DateTime?          @db.Timestamptz(3)
-  coverImageUrl     String?
-  viewCount         Int                @default(0)
-  enquiryCount      Int                @default(0)
-  isDemo            Boolean            @default(false)
-  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime           @updatedAt @db.Timestamptz(3)
-  deletedAt         DateTime?          @db.Timestamptz(3)
+  availability       Availability       @default(AVAILABLE)
+  rejectionReason    String?
+  isFeatured         Boolean            @default(false)
+  featuredUntil      DateTime?
+  submittedAt        DateTime?
+  approvedAt         DateTime?
+  publishedAt        DateTime?
+  expiresAt          DateTime?
+  closedAt           DateTime?
+  coverImageUrl      String?
+  viewCount          Int                @default(0)
+  enquiryCount       Int                @default(0)
+  isDemo             Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  deletedAt          DateTime?
 
   media         PropertyMedia[]
   documents     PropertyDocument[]
@@ -1281,14 +1282,12 @@ model Property {
   @@index([status, publishedAt])
   @@index([organizationId, status])
   @@index([projectId])
-  @@index([location], type: Gist)
-  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("properties")
 }
 
 model PropertyMedia {
-  id         String    @id @default(uuid(7)) @db.Uuid
-  propertyId String    @db.Uuid
+  id         String    @id @default(uuid(7)) @map("_id")
+  propertyId String
   property   Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   type       MediaType
   url        String
@@ -1296,79 +1295,81 @@ model PropertyMedia {
   caption    String?
   sortOrder  Int       @default(0)
   isCover    Boolean   @default(false)
-  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime  @default(now())
 
   @@index([propertyId, sortOrder])
   @@map("property_media")
 }
 
 model PropertyDocument {
-  id           String               @id @default(uuid(7)) @db.Uuid
-  propertyId   String               @db.Uuid
-  property     Property             @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  docType      PropertyDocumentType
-  title        String
-  fileId       String               @db.Uuid
-  file         StoredFile           @relation(fields: [fileId], references: [id])
-  visibility   DocumentVisibility   @default(PRIVATE)
-  verifiedAt   DateTime?            @db.Timestamptz(3)
-  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+  id         String               @id @default(uuid(7)) @map("_id")
+  propertyId String
+  property   Property             @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  docType    PropertyDocumentType
+  title      String
+  fileId     String
+  file       StoredFile           @relation(fields: [fileId], references: [id])
+  visibility DocumentVisibility   @default(PRIVATE)
+  verifiedAt DateTime?
+  createdAt  DateTime             @default(now())
 
   @@index([propertyId])
   @@map("property_documents")
 }
 
 model PropertyAmenity {
-  propertyId String   @db.Uuid
+  id         String   @id @default(uuid(7)) @map("_id")
+  propertyId String
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  amenityId  String   @db.Uuid
+  amenityId  String
   amenity    Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
 
-  @@id([propertyId, amenityId])
+  @@unique([propertyId, amenityId])
   @@map("property_amenities")
 }
 
 model PropertyStatusHistory {
-  id          String          @id @default(uuid(7)) @db.Uuid
-  propertyId  String          @db.Uuid
+  id          String          @id @default(uuid(7)) @map("_id")
+  propertyId  String
   property    Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   fromStatus  PropertyStatus?
   toStatus    PropertyStatus
   reason      String?
-  changedById String?         @db.Uuid
+  changedById String?
   changedBy   User?           @relation("PropertyStatusChangedBy", fields: [changedById], references: [id])
-  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime        @default(now())
 
   @@index([propertyId, createdAt])
   @@map("property_status_history")
 }
 
 model PropertyFavourite {
-  userId     String   @db.Uuid
+  id         String   @id @default(uuid(7)) @map("_id")
+  userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  propertyId String   @db.Uuid
+  propertyId String
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime @default(now())
 
-  @@id([userId, propertyId])
+  @@unique([userId, propertyId])
   @@map("property_favourites")
 }
 
 model PropertyReport {
-  id            String       @id @default(uuid(7)) @db.Uuid
-  propertyId    String       @db.Uuid
+  id            String       @id @default(uuid(7)) @map("_id")
+  propertyId    String
   property      Property     @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   reason        ReportReason
   details       String?
-  reporterId    String?      @db.Uuid
+  reporterId    String?
   reporter      User?        @relation("PropertyReportReporter", fields: [reporterId], references: [id])
   reporterEmail String?
   status        ReportStatus @default(OPEN)
   resolution    String?
-  resolvedById  String?      @db.Uuid
+  resolvedById  String?
   resolvedBy    User?        @relation("PropertyReportResolver", fields: [resolvedById], references: [id])
-  resolvedAt    DateTime?    @db.Timestamptz(3)
-  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  resolvedAt    DateTime?
+  createdAt     DateTime     @default(now())
 
   @@index([status, createdAt])
   @@map("property_reports")
@@ -1377,10 +1378,10 @@ model PropertyReport {
 // ═════════════════════════ Brokers & developers ═════════════════════════
 
 model BrokerProfile {
-  id                 String             @id @default(uuid(7)) @db.Uuid
-  userId             String             @unique @db.Uuid
+  id                 String             @id @default(uuid(7)) @map("_id")
+  userId             String             @unique
   user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organizationId     String             @db.Uuid
+  organizationId     String
   organization       Organization       @relation(fields: [organizationId], references: [id])
   displayName        String
   reraAgentNumber    String?
@@ -1391,34 +1392,34 @@ model BrokerProfile {
   verificationStatus VerificationStatus @default(PENDING)
   isFeatured         Boolean            @default(false)
   isDemo             Boolean            @default(false)
-  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@index([organizationId])
   @@map("broker_profiles")
 }
 
 model DeveloperProfile {
-  id               String       @id @default(uuid(7)) @db.Uuid
-  organizationId   String       @unique @db.Uuid
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  establishedYear  Int?
+  id                String       @id @default(uuid(7)) @map("_id")
+  organizationId    String       @unique
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  establishedYear   Int?
   /// Self-declared by the developer (displayed as such)
   projectsDelivered Int?
-  about            String?
-  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+  about             String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   @@map("developer_profiles")
 }
 
 /// Admin-managed broker subscription plans (no prices are hard-coded).
 model SubscriptionPlan {
-  id            String        @id @default(uuid(7)) @db.Uuid
+  id            String        @id @default(uuid(7)) @map("_id")
   code          String        @unique
   name          String
   description   String?
-  price         Decimal       @db.Decimal(12, 2)
+  price         Float
   billingPeriod BillingPeriod
   /// Maximum concurrently active listings (null = unlimited)
   listingQuota  Int?
@@ -1426,8 +1427,8 @@ model SubscriptionPlan {
   features      String[]      @default([])
   isActive      Boolean       @default(true)
   sortOrder     Int           @default(0)
-  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime      @updatedAt @db.Timestamptz(3)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   subscriptions OrganizationSubscription[]
 
@@ -1435,22 +1436,22 @@ model SubscriptionPlan {
 }
 
 model OrganizationSubscription {
-  id               String             @id @default(uuid(7)) @db.Uuid
-  organizationId   String             @db.Uuid
+  id               String             @id @default(uuid(7)) @map("_id")
+  organizationId   String
   organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  planId           String             @db.Uuid
+  planId           String
   plan             SubscriptionPlan   @relation(fields: [planId], references: [id])
   status           SubscriptionStatus @default(PENDING)
-  startsAt         DateTime           @db.Timestamptz(3)
-  endsAt           DateTime           @db.Timestamptz(3)
-  amount           Decimal            @db.Decimal(12, 2)
+  startsAt         DateTime
+  endsAt           DateTime
+  amount           Float
   /// Manual payment reference (no online gateway in v1)
   paymentReference String?
   notes            String?
-  createdById      String?            @db.Uuid
+  createdById      String?
   createdBy        User?              @relation("SubscriptionCreatedBy", fields: [createdById], references: [id])
-  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@index([organizationId, status])
   @@map("broker_subscriptions")
@@ -1459,53 +1460,53 @@ model OrganizationSubscription {
 // ═════════════════════════ Projects ═════════════════════════
 
 model Project {
-  id                String        @id @default(uuid(7)) @db.Uuid
+  id                String        @id @default(uuid(7)) @map("_id")
   slug              String        @unique
   name              String
   tagline           String?
   projectType       ProjectType
-  organizationId    String        @db.Uuid
+  organizationId    String
   organization      Organization  @relation("ProjectManagingOrg", fields: [organizationId], references: [id])
-  developerOrgId    String?       @db.Uuid
+  developerOrgId    String?
   developerOrg      Organization? @relation("ProjectDeveloperOrg", fields: [developerOrgId], references: [id])
-  stateId           String        @db.Uuid
+  stateId           String
   state             State         @relation(fields: [stateId], references: [id])
-  cityId            String        @db.Uuid
+  cityId            String
   city              City          @relation(fields: [cityId], references: [id])
-  localityId        String        @db.Uuid
+  localityId        String
   locality          Locality      @relation(fields: [localityId], references: [id])
   addressLine       String?
   pincode           String?
-  latitude          Decimal?      @db.Decimal(9, 6)
-  longitude         Decimal?      @db.Decimal(9, 6)
-  location          Unsupported("geography(Point, 4326)")?
+  latitude          Float?
+  longitude         Float?
+  location          Json? // GeoJSON Point { type, coordinates: [lng, lat] } — 2dsphere index by IndexesService
   description       String
   heroImageUrl      String?
   logoUrl           String?
   masterPlanUrl     String?
   videoUrls         String[]      @default([])
-  totalAreaAcres    Decimal?      @db.Decimal(10, 2)
+  totalAreaAcres    Float?
   totalUnitsPlanned Int?
-  launchDate        DateTime?     @db.Date
-  possessionDate    DateTime?     @db.Date
+  launchDate        DateTime?
+  possessionDate    DateTime?
   /// Optional manual price range shown when inventory is not yet released
-  priceMinOverride  Decimal?      @db.Decimal(14, 2)
-  priceMaxOverride  Decimal?      @db.Decimal(14, 2)
+  priceMinOverride  Float?
+  priceMaxOverride  Float?
   reraNumber        String?
-  reraValidUntil    DateTime?     @db.Date
+  reraValidUntil    DateTime?
   approvalDetails   String?
   legalInformation  String?
   // Lifecycle (server is the source of truth)
   status            ProjectStatus @default(DRAFT)
   /// When true the scheduler derives status from booking timestamps and inventory
   autoStatus        Boolean       @default(true)
-  bookingOpensAt    DateTime?     @db.Timestamptz(3)
-  bookingClosesAt   DateTime?     @db.Timestamptz(3)
+  bookingOpensAt    DateTime?
+  bookingClosesAt   DateTime?
   closingSoonHours  Int           @default(72)
   reviewStatus      ReviewStatus  @default(NOT_SUBMITTED)
   reviewNote        String?
   isPublished       Boolean       @default(false)
-  publishedAt       DateTime?     @db.Timestamptz(3)
+  publishedAt       DateTime?
   isFeatured        Boolean       @default(false)
   whatsappNumber    String?
   salesPhone        String?
@@ -1514,11 +1515,11 @@ model Project {
   seoDescription    String?
   ogImageUrl        String?
   isDemo            Boolean       @default(false)
-  createdById       String?       @db.Uuid
+  createdById       String?
   createdBy         User?         @relation("ProjectCreatedBy", fields: [createdById], references: [id])
-  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
-  deletedAt         DateTime?     @db.Timestamptz(3)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
 
   statusHistory       ProjectStatusHistory[]
   media               ProjectMedia[]
@@ -1545,85 +1546,84 @@ model Project {
   @@index([isPublished, status])
   @@index([organizationId])
   @@index([developerOrgId])
-  @@index([location], type: Gist)
-  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("projects")
 }
 
 model ProjectStatusHistory {
-  id          String         @id @default(uuid(7)) @db.Uuid
-  projectId   String         @db.Uuid
+  id          String         @id @default(uuid(7)) @map("_id")
+  projectId   String
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   fromStatus  ProjectStatus?
   toStatus    ProjectStatus
   reason      String?
   /// NULL when changed by the scheduler
-  changedById String?        @db.Uuid
+  changedById String?
   changedBy   User?          @relation("ProjectStatusChangedBy", fields: [changedById], references: [id])
-  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime       @default(now())
 
   @@index([projectId, createdAt])
   @@map("project_status_history")
 }
 
 model ProjectMedia {
-  id         String    @id @default(uuid(7)) @db.Uuid
-  projectId  String    @db.Uuid
+  id         String    @id @default(uuid(7)) @map("_id")
+  projectId  String
   project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   type       MediaType
   url        String
   storageKey String?
   caption    String?
   sortOrder  Int       @default(0)
-  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime  @default(now())
 
   @@index([projectId, type, sortOrder])
   @@map("project_images")
 }
 
 model ProjectDocument {
-  id         String               @id @default(uuid(7)) @db.Uuid
-  projectId  String               @db.Uuid
+  id         String               @id @default(uuid(7)) @map("_id")
+  projectId  String
   project    Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   docType    PropertyDocumentType
   title      String
-  fileId     String               @db.Uuid
+  fileId     String
   file       StoredFile           @relation(fields: [fileId], references: [id])
   visibility DocumentVisibility   @default(PRIVATE)
   sortOrder  Int                  @default(0)
-  createdAt  DateTime             @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime             @default(now())
 
   @@index([projectId])
   @@map("project_documents")
 }
 
 model ProjectAmenity {
-  projectId String  @db.Uuid
+  id        String  @id @default(uuid(7)) @map("_id")
+  projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  amenityId String  @db.Uuid
+  amenityId String
   amenity   Amenity @relation(fields: [amenityId], references: [id], onDelete: Cascade)
 
-  @@id([projectId, amenityId])
+  @@unique([projectId, amenityId])
   @@map("project_amenities")
 }
 
 model ProjectNearbyPlace {
-  id          String         @id @default(uuid(7)) @db.Uuid
-  projectId   String         @db.Uuid
-  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category    NearbyCategory
-  name        String
-  distanceKm  Decimal        @db.Decimal(6, 2)
+  id            String         @id @default(uuid(7)) @map("_id")
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category      NearbyCategory
+  name          String
+  distanceKm    Float
   travelMinutes Int?
-  sortOrder   Int            @default(0)
+  sortOrder     Int            @default(0)
 
   @@index([projectId])
   @@map("project_nearby_places")
 }
 
 model ProjectFaq {
-  id        String  @id @default(uuid(7)) @db.Uuid
-  projectId String  @db.Uuid
+  id        String  @id @default(uuid(7)) @map("_id")
+  projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   question  String
   answer    String
@@ -1634,44 +1634,44 @@ model ProjectFaq {
 }
 
 model ProjectConstructionUpdate {
-  id              String   @id @default(uuid(7)) @db.Uuid
-  projectId       String   @db.Uuid
+  id              String   @id @default(uuid(7)) @map("_id")
+  projectId       String
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title           String
   description     String?
   progressPercent Int?
-  updateDate      DateTime @db.Date
+  updateDate      DateTime
   imageUrls       String[] @default([])
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  createdAt       DateTime @default(now())
 
   @@index([projectId, updateDate])
   @@map("project_construction_updates")
 }
 
 model ProjectTeamMember {
-  id               String          @id @default(uuid(7)) @db.Uuid
-  projectId        String          @db.Uuid
+  id               String          @id @default(uuid(7)) @map("_id")
+  projectId        String
   project          Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  userId           String          @db.Uuid
+  userId           String
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   role             ProjectTeamRole @default(SALES_EXECUTIVE)
   isPrimaryContact Boolean         @default(false)
-  createdAt        DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt        DateTime        @default(now())
 
   @@unique([projectId, userId])
   @@map("project_team_members")
 }
 
 model ProjectBlock {
-  id          String    @id @default(uuid(7)) @db.Uuid
-  projectId   String    @db.Uuid
+  id          String    @id @default(uuid(7)) @map("_id")
+  projectId   String
   project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name        String
   type        BlockType @default(BLOCK)
   totalFloors Int?
   description String?
   sortOrder   Int       @default(0)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime  @default(now())
 
   units ProjectUnit[]
 
@@ -1680,35 +1680,35 @@ model ProjectBlock {
 }
 
 model ProjectUnit {
-  id            String      @id @default(uuid(7)) @db.Uuid
-  projectId     String      @db.Uuid
-  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  blockId       String?     @db.Uuid
-  block         ProjectBlock? @relation(fields: [blockId], references: [id])
+  id                String        @id @default(uuid(7)) @map("_id")
+  projectId         String
+  project           Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  blockId           String?
+  block             ProjectBlock? @relation(fields: [blockId], references: [id])
   /// Unique within the project, e.g. "A-101" or "PLOT-27"
-  code          String
-  unitType      UnitType
-  floorNumber   Int?
-  configuration String?
-  bedrooms      Int?
-  area          Decimal     @db.Decimal(14, 2)
-  areaUnit      AreaUnit
-  areaSqft      Decimal     @db.Decimal(16, 2)
-  carpetAreaSqft Decimal?   @db.Decimal(14, 2)
-  facing        Facing?
-  dimensions    String?
-  isCorner      Boolean     @default(false)
-  basePrice     Decimal     @db.Decimal(14, 2)
+  code              String
+  unitType          UnitType
+  floorNumber       Int?
+  configuration     String?
+  bedrooms          Int?
+  area              Float
+  areaUnit          AreaUnit
+  areaSqft          Float
+  carpetAreaSqft    Float?
+  facing            Facing?
+  dimensions        String?
+  isCorner          Boolean       @default(false)
+  basePrice         Float
   /// Preferential location charges and other charges
-  additionalCharges Decimal @default(0) @db.Decimal(14, 2)
-  totalPrice    Decimal     @db.Decimal(14, 2)
-  status        UnitStatus  @default(AVAILABLE)
-  holdExpiresAt DateTime?   @db.Timestamptz(3)
-  notes         String?
+  additionalCharges Float         @default(0)
+  totalPrice        Float
+  status            UnitStatus    @default(AVAILABLE)
+  holdExpiresAt     DateTime?
+  notes             String?
   /// Optimistic concurrency token for reservation/booking transitions
-  version       Int         @default(0)
-  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  version           Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   history      UnitStatusHistory[]
   reservations UnitReservation[]
@@ -1723,48 +1723,48 @@ model ProjectUnit {
 }
 
 model UnitStatusHistory {
-  id          String      @id @default(uuid(7)) @db.Uuid
-  unitId      String      @db.Uuid
+  id          String      @id @default(uuid(7)) @map("_id")
+  unitId      String
   unit        ProjectUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
   fromStatus  UnitStatus?
   toStatus    UnitStatus
   reason      String?
-  leadId      String?     @db.Uuid
-  priceBefore Decimal?    @db.Decimal(14, 2)
-  priceAfter  Decimal?    @db.Decimal(14, 2)
-  changedById String?     @db.Uuid
+  leadId      String?
+  priceBefore Float?
+  priceAfter  Float?
+  changedById String?
   changedBy   User?       @relation("UnitStatusChangedBy", fields: [changedById], references: [id])
-  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime    @default(now())
 
   @@index([unitId, createdAt])
   @@map("project_booking_history")
 }
 
 model UnitReservation {
-  id           String            @id @default(uuid(7)) @db.Uuid
-  unitId       String            @db.Uuid
+  id           String            @id @default(uuid(7)) @map("_id")
+  unitId       String
   unit         ProjectUnit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  leadId       String?           @db.Uuid
+  leadId       String?
   lead         Lead?             @relation(fields: [leadId], references: [id])
-  customerId   String?           @db.Uuid
+  customerId   String?
   customer     Customer?         @relation(fields: [customerId], references: [id])
   status       ReservationStatus @default(ACTIVE)
-  expiresAt    DateTime?         @db.Timestamptz(3)
+  expiresAt    DateTime?
   notes        String?
-  reservedById String?           @db.Uuid
+  reservedById String?
   reservedBy   User?             @relation("UnitReservedBy", fields: [reservedById], references: [id])
-  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   @@index([unitId, status])
   @@map("project_reservations")
 }
 
 model ProjectDomain {
-  id                 String       @id @default(uuid(7)) @db.Uuid
-  projectId          String       @db.Uuid
+  id                 String       @id @default(uuid(7)) @map("_id")
+  projectId          String
   project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  organizationId     String       @db.Uuid
+  organizationId     String
   organization       Organization @relation(fields: [organizationId], references: [id])
   /// Normalised (lower-case, punycode, no trailing dot, no port)
   hostname           String       @unique
@@ -1774,17 +1774,17 @@ model ProjectDomain {
   verificationToken  String
   /// DNS TXT record name the owner must create
   verificationRecord String
-  verifiedAt         DateTime?    @db.Timestamptz(3)
-  lastCheckedAt      DateTime?    @db.Timestamptz(3)
+  verifiedAt         DateTime?
+  lastCheckedAt      DateTime?
   lastError          String?
   dnsTargetOk        Boolean      @default(false)
   sslStatus          SslStatus    @default(NOT_REQUESTED)
-  enabledAt          DateTime?    @db.Timestamptz(3)
-  disabledAt         DateTime?    @db.Timestamptz(3)
-  createdById        String?      @db.Uuid
+  enabledAt          DateTime?
+  disabledAt         DateTime?
+  createdById        String?
   createdBy          User?        @relation("DomainCreatedBy", fields: [createdById], references: [id])
-  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
   @@index([projectId])
   @@index([status])
@@ -1793,33 +1793,33 @@ model ProjectDomain {
 
 /// Structured, validated page-builder document for a project microsite (draft + published copies).
 model ProjectPage {
-  id               String    @id @default(uuid(7)) @db.Uuid
-  projectId        String    @unique @db.Uuid
-  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  draftSections    Json      @default("[]")
+  id                String    @id @default(uuid(7)) @map("_id")
+  projectId         String    @unique
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  draftSections     Json      @default("[]")
   publishedSections Json?
-  draftUpdatedAt   DateTime  @default(now()) @db.Timestamptz(3)
-  publishedAt      DateTime? @db.Timestamptz(3)
-  publishedById    String?   @db.Uuid
-  publishedBy      User?     @relation("PagePublishedBy", fields: [publishedById], references: [id])
-  revision         Int       @default(0)
+  draftUpdatedAt    DateTime  @default(now())
+  publishedAt       DateTime?
+  publishedById     String?
+  publishedBy       User?     @relation("PagePublishedBy", fields: [publishedById], references: [id])
+  revision          Int       @default(0)
   /// Random token allowing a time-limited draft preview without publishing
-  previewToken     String?
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  previewToken      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@map("project_pages")
 }
 
 model ProjectPageRevision {
-  id            String   @id @default(uuid(7)) @db.Uuid
-  projectId     String   @db.Uuid
+  id            String   @id @default(uuid(7)) @map("_id")
+  projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   revision      Int
   sections      Json
-  publishedById String?  @db.Uuid
+  publishedById String?
   publishedBy   User?    @relation("PageRevisionBy", fields: [publishedById], references: [id])
-  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime @default(now())
 
   @@unique([projectId, revision])
   @@map("project_page_revisions")
@@ -1829,10 +1829,10 @@ model ProjectPageRevision {
 
 /// Customers are tenant-scoped: each organisation keeps its own CRM record of a person.
 model Customer {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  userId         String?      @db.Uuid
+  userId         String?
   user           User?        @relation("CustomerUser", fields: [userId], references: [id])
   fullName       String
   /// E.164 normalised
@@ -1843,9 +1843,9 @@ model Customer {
   occupation     String?
   notes          String?
   isDemo         Boolean      @default(false)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
-  deletedAt      DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
   preferences  CustomerPreference[]
   enquiries    Enquiry[]
@@ -1855,68 +1855,68 @@ model Customer {
   reservations UnitReservation[]
   invoices     Invoice[]
 
-  @@unique([organizationId, phone])
+  // unique (organizationId, phone) when phone is set — partial index in IndexesService
   @@index([organizationId, email])
   @@index([userId])
   @@map("customers")
 }
 
 model CustomerPreference {
-  id             String           @id @default(uuid(7)) @db.Uuid
-  customerId     String           @db.Uuid
-  customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  listingType    ListingType?
-  segment        PropertySegment?
-  cityId         String?          @db.Uuid
-  city           City?            @relation(fields: [cityId], references: [id])
-  localityNames  String[]         @default([])
-  budgetMin      Decimal?         @db.Decimal(14, 2)
-  budgetMax      Decimal?         @db.Decimal(14, 2)
-  bedroomsMin    Int?
-  notes          String?
-  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
+  id            String           @id @default(uuid(7)) @map("_id")
+  customerId    String
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  listingType   ListingType?
+  segment       PropertySegment?
+  cityId        String?
+  city          City?            @relation(fields: [cityId], references: [id])
+  localityNames String[]         @default([])
+  budgetMin     Float?
+  budgetMax     Float?
+  bedroomsMin   Int?
+  notes         String?
+  createdAt     DateTime         @default(now())
 
   @@index([customerId])
   @@map("customer_preferences")
 }
 
 model Enquiry {
-  id               String        @id @default(uuid(7)) @db.Uuid
-  referenceNo      String        @unique
-  organizationId   String        @db.Uuid
-  organization     Organization  @relation(fields: [organizationId], references: [id])
-  type             EnquiryType
-  status           EnquiryStatus @default(NEW)
-  customerId       String?       @db.Uuid
-  customer         Customer?     @relation(fields: [customerId], references: [id])
-  name             String
-  phone            String
-  email            String?
-  message          String?
-  propertyId       String?       @db.Uuid
-  property         Property?     @relation(fields: [propertyId], references: [id])
-  projectId        String?       @db.Uuid
-  project          Project?      @relation(fields: [projectId], references: [id])
-  unitId           String?       @db.Uuid
-  unit             ProjectUnit?  @relation(fields: [unitId], references: [id])
-  preferredDate    DateTime?     @db.Date
+  id                String        @id @default(uuid(7)) @map("_id")
+  referenceNo       String        @unique
+  organizationId    String
+  organization      Organization  @relation(fields: [organizationId], references: [id])
+  type              EnquiryType
+  status            EnquiryStatus @default(NEW)
+  customerId        String?
+  customer          Customer?     @relation(fields: [customerId], references: [id])
+  name              String
+  phone             String
+  email             String?
+  message           String?
+  propertyId        String?
+  property          Property?     @relation(fields: [propertyId], references: [id])
+  projectId         String?
+  project           Project?      @relation(fields: [projectId], references: [id])
+  unitId            String?
+  unit              ProjectUnit?  @relation(fields: [unitId], references: [id])
+  preferredDate     DateTime?
   preferredTimeSlot String?
-  sourceKey        String        @default("WEBSITE")
-  sourcePage       String?
-  sourceHost       String?
-  utmSource        String?
-  utmMedium        String?
-  utmCampaign      String?
-  referrer         String?
-  ipHash           String?
-  userAgent        String?
-  consent          Boolean       @default(false)
-  leadId           String?       @db.Uuid
-  lead             Lead?         @relation(fields: [leadId], references: [id])
-  spamReason       String?
-  isDemo           Boolean       @default(false)
-  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
+  sourceKey         String        @default("WEBSITE")
+  sourcePage        String?
+  sourceHost        String?
+  utmSource         String?
+  utmMedium         String?
+  utmCampaign       String?
+  referrer          String?
+  ipHash            String?
+  userAgent         String?
+  consent           Boolean       @default(false)
+  leadId            String?
+  lead              Lead?         @relation(fields: [leadId], references: [id])
+  spamReason        String?
+  isDemo            Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([organizationId, createdAt])
   @@index([phone])
@@ -1925,12 +1925,12 @@ model Enquiry {
 }
 
 model LeadSource {
-  id        String   @id @default(uuid(7)) @db.Uuid
+  id        String   @id @default(uuid(7)) @map("_id")
   key       String   @unique
   name      String
   isSystem  Boolean  @default(false)
   isActive  Boolean  @default(true)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt DateTime @default(now())
 
   leads Lead[]
 
@@ -1938,28 +1938,28 @@ model LeadSource {
 }
 
 model LeadProvider {
-  id               String             @id @default(uuid(7)) @db.Uuid
+  id                  String             @id @default(uuid(7)) @map("_id")
   /// The provider's own organisation (members are provider users)
-  organizationId   String             @unique @db.Uuid
-  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name             String
-  contactName      String?
-  email            String?
-  phone            String?
-  status           LeadProviderStatus @default(ACTIVE)
+  organizationId      String             @unique
+  organization        Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                String
+  contactName         String?
+  email               String?
+  phone               String?
+  status              LeadProviderStatus @default(ACTIVE)
   /// Leads must be at least this many days apart to not count as duplicates
-  duplicateWindowDays Int             @default(90)
-  apiKeyPrefix     String?
-  apiKeyHash       String?
-  notes            String?
-  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+  duplicateWindowDays Int                @default(90)
+  apiKeyPrefix        String?
+  apiKeyHash          String?
+  notes               String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
-  leads            Lead[]
-  commissionRules  CommissionRule[]
+  leads             Lead[]
+  commissionRules   CommissionRule[]
   commissionRecords CommissionRecord[]
-  payouts          CommissionPayout[]
-  deals            Deal[]
+  payouts           CommissionPayout[]
+  deals             Deal[]
 
   @@map("lead_providers")
 }
@@ -1970,19 +1970,19 @@ enum LeadProviderStatus {
 }
 
 model Campaign {
-  id             String         @id @default(uuid(7)) @db.Uuid
-  organizationId String         @db.Uuid
+  id             String         @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization   @relation(fields: [organizationId], references: [id])
   name           String
   code           String
   channel        String
   status         CampaignStatus @default(DRAFT)
-  startDate      DateTime?      @db.Date
-  endDate        DateTime?      @db.Date
-  budget         Decimal?       @db.Decimal(14, 2)
+  startDate      DateTime?
+  endDate        DateTime?
+  budget         Float?
   notes          String?
-  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   leads Lead[]
 
@@ -1991,61 +1991,61 @@ model Campaign {
 }
 
 model Lead {
-  id                String           @id @default(uuid(7)) @db.Uuid
-  leadNo            String           @unique
-  organizationId    String           @db.Uuid
-  organization      Organization     @relation(fields: [organizationId], references: [id])
-  customerId        String           @db.Uuid
-  customer          Customer         @relation(fields: [customerId], references: [id])
-  name              String
-  phone             String
-  email             String?
-  sourceId          String           @db.Uuid
-  source            LeadSource       @relation(fields: [sourceId], references: [id])
-  leadProviderId    String?          @db.Uuid
-  leadProvider      LeadProvider?    @relation(fields: [leadProviderId], references: [id])
-  campaignId        String?          @db.Uuid
-  campaign          Campaign?        @relation(fields: [campaignId], references: [id])
-  propertyId        String?          @db.Uuid
-  property          Property?        @relation(fields: [propertyId], references: [id])
-  projectId         String?          @db.Uuid
-  project           Project?         @relation(fields: [projectId], references: [id])
-  unitId            String?          @db.Uuid
-  unit              ProjectUnit?     @relation(fields: [unitId], references: [id])
-  enquiryType       EnquiryType      @default(GENERAL)
-  listingType       ListingType?
-  budgetMin         Decimal?         @db.Decimal(14, 2)
-  budgetMax         Decimal?         @db.Decimal(14, 2)
-  preferredCityId   String?          @db.Uuid
-  preferredCity     City?            @relation(fields: [preferredCityId], references: [id])
-  preferredLocalityId String?        @db.Uuid
-  preferredLocality Locality?        @relation(fields: [preferredLocalityId], references: [id])
-  locationPreference String?
-  requirement       String?
-  status            LeadStatus       @default(NEW)
-  priority          LeadPriority     @default(MEDIUM)
-  intakeStatus      LeadIntakeStatus @default(ACCEPTED)
-  intakeNote        String?
-  isDuplicate       Boolean          @default(false)
-  duplicateOfId     String?          @db.Uuid
-  duplicateOf       Lead?            @relation("LeadDuplicates", fields: [duplicateOfId], references: [id])
-  duplicates        Lead[]           @relation("LeadDuplicates")
-  assignedToId      String?          @db.Uuid
-  assignedTo        User?            @relation("LeadAssignedTo", fields: [assignedToId], references: [id])
-  assignedTeamId    String?          @db.Uuid
-  assignedTeam      SalesTeam?       @relation(fields: [assignedTeamId], references: [id])
-  assignedAt        DateTime?        @db.Timestamptz(3)
-  nextFollowUpAt    DateTime?        @db.Timestamptz(3)
-  lastContactedAt   DateTime?        @db.Timestamptz(3)
-  lostReason        String?
-  convertedAt       DateTime?        @db.Timestamptz(3)
-  tags              String[]         @default([])
-  createdById       String?          @db.Uuid
-  createdBy         User?            @relation("LeadCreatedBy", fields: [createdById], references: [id])
-  isDemo            Boolean          @default(false)
-  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
-  deletedAt         DateTime?        @db.Timestamptz(3)
+  id                  String           @id @default(uuid(7)) @map("_id")
+  leadNo              String           @unique
+  organizationId      String
+  organization        Organization     @relation(fields: [organizationId], references: [id])
+  customerId          String
+  customer            Customer         @relation(fields: [customerId], references: [id])
+  name                String
+  phone               String
+  email               String?
+  sourceId            String
+  source              LeadSource       @relation(fields: [sourceId], references: [id])
+  leadProviderId      String?
+  leadProvider        LeadProvider?    @relation(fields: [leadProviderId], references: [id])
+  campaignId          String?
+  campaign            Campaign?        @relation(fields: [campaignId], references: [id])
+  propertyId          String?
+  property            Property?        @relation(fields: [propertyId], references: [id])
+  projectId           String?
+  project             Project?         @relation(fields: [projectId], references: [id])
+  unitId              String?
+  unit                ProjectUnit?     @relation(fields: [unitId], references: [id])
+  enquiryType         EnquiryType      @default(GENERAL)
+  listingType         ListingType?
+  budgetMin           Float?
+  budgetMax           Float?
+  preferredCityId     String?
+  preferredCity       City?            @relation(fields: [preferredCityId], references: [id])
+  preferredLocalityId String?
+  preferredLocality   Locality?        @relation(fields: [preferredLocalityId], references: [id])
+  locationPreference  String?
+  requirement         String?
+  status              LeadStatus       @default(NEW)
+  priority            LeadPriority     @default(MEDIUM)
+  intakeStatus        LeadIntakeStatus @default(ACCEPTED)
+  intakeNote          String?
+  isDuplicate         Boolean          @default(false)
+  duplicateOfId       String?
+  duplicateOf         Lead?            @relation("LeadDuplicates", fields: [duplicateOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  duplicates          Lead[]           @relation("LeadDuplicates")
+  assignedToId        String?
+  assignedTo          User?            @relation("LeadAssignedTo", fields: [assignedToId], references: [id])
+  assignedTeamId      String?
+  assignedTeam        SalesTeam?       @relation(fields: [assignedTeamId], references: [id])
+  assignedAt          DateTime?
+  nextFollowUpAt      DateTime?
+  lastContactedAt     DateTime?
+  lostReason          String?
+  convertedAt         DateTime?
+  tags                String[]         @default([])
+  createdById         String?
+  createdBy           User?            @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  isDemo              Boolean          @default(false)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  deletedAt           DateTime?
 
   enquiries    Enquiry[]
   assignments  LeadAssignment[]
@@ -2067,27 +2067,27 @@ model Lead {
 
 /// Ordered, tenant-scoped rules for automatic lead assignment.
 model AssignmentRule {
-  id               String             @id @default(uuid(7)) @db.Uuid
-  organizationId   String             @db.Uuid
-  organization     Organization       @relation(fields: [organizationId], references: [id])
-  name             String
-  priority         Int                @default(100)
-  isActive         Boolean            @default(true)
+  id                  String             @id @default(uuid(7)) @map("_id")
+  organizationId      String
+  organization        Organization       @relation(fields: [organizationId], references: [id])
+  name                String
+  priority            Int                @default(100)
+  isActive            Boolean            @default(true)
   // Match conditions (all provided conditions must match)
-  matchProjectId   String?            @db.Uuid
-  matchProject     Project?           @relation(fields: [matchProjectId], references: [id])
-  matchCityIds     String[]           @default([])
-  matchLocalityIds String[]           @default([])
-  matchSourceKeys  String[]           @default([])
-  matchListingType ListingType?
+  matchProjectId      String?
+  matchProject        Project?           @relation(fields: [matchProjectId], references: [id])
+  matchCityIds        String[]           @default([])
+  matchLocalityIds    String[]           @default([])
+  matchSourceKeys     String[]           @default([])
+  matchListingType    ListingType?
   // Assignment
-  salesTeamId      String             @db.Uuid
-  salesTeam        SalesTeam          @relation(fields: [salesTeamId], references: [id])
-  strategy         AssignmentStrategy @default(ROUND_ROBIN)
+  salesTeamId         String
+  salesTeam           SalesTeam          @relation(fields: [salesTeamId], references: [id])
+  strategy            AssignmentStrategy @default(ROUND_ROBIN)
   /// Members with this many open leads are skipped (null = no cap)
   maxOpenLeadsPerUser Int?
-  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
   assignments LeadAssignment[]
 
@@ -2096,18 +2096,18 @@ model AssignmentRule {
 }
 
 model SalesTeam {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  name           String
-  description    String?
-  managerId      String?      @db.Uuid
-  manager        User?        @relation("SalesTeamManager", fields: [managerId], references: [id])
+  id                 String       @id @default(uuid(7)) @map("_id")
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id])
+  name               String
+  description        String?
+  managerId          String?
+  manager            User?        @relation("SalesTeamManager", fields: [managerId], references: [id])
   /// Round-robin cursor: id of the member who most recently received a lead
-  lastAssignedUserId String?  @db.Uuid
-  isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  lastAssignedUserId String?
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
   members         SalesTeamMember[]
   rules           AssignmentRule[]
@@ -2119,36 +2119,36 @@ model SalesTeam {
 }
 
 model SalesTeamMember {
-  id        String    @id @default(uuid(7)) @db.Uuid
-  teamId    String    @db.Uuid
-  team      SalesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  userId    String    @db.Uuid
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  isActive  Boolean   @default(true)
-  joinedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  id       String    @id @default(uuid(7)) @map("_id")
+  teamId   String
+  team     SalesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isActive Boolean   @default(true)
+  joinedAt DateTime  @default(now())
 
   @@unique([teamId, userId])
   @@map("sales_team_members")
 }
 
 model LeadAssignment {
-  id           String           @id @default(uuid(7)) @db.Uuid
-  leadId       String           @db.Uuid
+  id           String           @id @default(uuid(7)) @map("_id")
+  leadId       String
   lead         Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  assignedToId String           @db.Uuid
+  assignedToId String
   assignedTo   User             @relation("AssignmentAssignee", fields: [assignedToId], references: [id])
   /// NULL when assigned automatically by the engine
-  assignedById String?          @db.Uuid
+  assignedById String?
   assignedBy   User?            @relation("AssignmentAssigner", fields: [assignedById], references: [id])
-  teamId       String?          @db.Uuid
+  teamId       String?
   team         SalesTeam?       @relation(fields: [teamId], references: [id])
-  ruleId       String?          @db.Uuid
+  ruleId       String?
   rule         AssignmentRule?  @relation(fields: [ruleId], references: [id])
   method       AssignmentMethod
   reason       String?
   isCurrent    Boolean          @default(true)
-  assignedAt   DateTime         @default(now()) @db.Timestamptz(3)
-  endedAt      DateTime?        @db.Timestamptz(3)
+  assignedAt   DateTime         @default(now())
+  endedAt      DateTime?
 
   @@index([leadId, assignedAt])
   @@index([assignedToId, isCurrent])
@@ -2156,8 +2156,8 @@ model LeadAssignment {
 }
 
 model LeadActivity {
-  id              String             @id @default(uuid(7)) @db.Uuid
-  leadId          String             @db.Uuid
+  id              String             @id @default(uuid(7)) @map("_id")
+  leadId          String
   lead            Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
   type            ActivityType
   direction       ActivityDirection?
@@ -2166,32 +2166,32 @@ model LeadActivity {
   details         String?
   metadata        Json?
   durationSeconds Int?
-  performedById   String?            @db.Uuid
+  performedById   String?
   performedBy     User?              @relation("ActivityPerformer", fields: [performedById], references: [id])
-  occurredAt      DateTime           @default(now()) @db.Timestamptz(3)
-  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  occurredAt      DateTime           @default(now())
+  createdAt       DateTime           @default(now())
 
   @@index([leadId, occurredAt])
   @@map("lead_activities")
 }
 
 model LeadFollowUp {
-  id           String         @id @default(uuid(7)) @db.Uuid
-  leadId       String         @db.Uuid
-  lead         Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  assignedToId String         @db.Uuid
-  assignedTo   User           @relation("FollowUpAssignee", fields: [assignedToId], references: [id])
-  type         FollowUpType   @default(CALL)
-  dueAt        DateTime       @db.Timestamptz(3)
-  status       FollowUpStatus @default(PENDING)
-  notes        String?
-  outcome      String?
-  completedAt  DateTime?      @db.Timestamptz(3)
-  reminderSentAt DateTime?    @db.Timestamptz(3)
-  createdById  String?        @db.Uuid
-  createdBy    User?          @relation("FollowUpCreator", fields: [createdById], references: [id])
-  createdAt    DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime       @updatedAt @db.Timestamptz(3)
+  id             String         @id @default(uuid(7)) @map("_id")
+  leadId         String
+  lead           Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignedToId   String
+  assignedTo     User           @relation("FollowUpAssignee", fields: [assignedToId], references: [id])
+  type           FollowUpType   @default(CALL)
+  dueAt          DateTime
+  status         FollowUpStatus @default(PENDING)
+  notes          String?
+  outcome        String?
+  completedAt    DateTime?
+  reminderSentAt DateTime?
+  createdById    String?
+  createdBy      User?          @relation("FollowUpCreator", fields: [createdById], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@index([assignedToId, status, dueAt])
   @@index([leadId])
@@ -2199,30 +2199,30 @@ model LeadFollowUp {
 }
 
 model SiteVisit {
-  id           String          @id @default(uuid(7)) @db.Uuid
-  leadId       String          @db.Uuid
-  lead         Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  customerId   String          @db.Uuid
-  customer     Customer        @relation(fields: [customerId], references: [id])
-  propertyId   String?         @db.Uuid
-  property     Property?       @relation(fields: [propertyId], references: [id])
-  projectId    String?         @db.Uuid
-  project      Project?        @relation(fields: [projectId], references: [id])
-  unitId       String?         @db.Uuid
-  unit         ProjectUnit?    @relation(fields: [unitId], references: [id])
-  scheduledAt  DateTime        @db.Timestamptz(3)
-  status       SiteVisitStatus @default(SCHEDULED)
-  assignedToId String?         @db.Uuid
-  assignedTo   User?           @relation("SiteVisitAssignee", fields: [assignedToId], references: [id])
-  meetingPoint String?
-  notes        String?
-  outcome      String?
+  id               String          @id @default(uuid(7)) @map("_id")
+  leadId           String
+  lead             Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  customerId       String
+  customer         Customer        @relation(fields: [customerId], references: [id])
+  propertyId       String?
+  property         Property?       @relation(fields: [propertyId], references: [id])
+  projectId        String?
+  project          Project?        @relation(fields: [projectId], references: [id])
+  unitId           String?
+  unit             ProjectUnit?    @relation(fields: [unitId], references: [id])
+  scheduledAt      DateTime
+  status           SiteVisitStatus @default(SCHEDULED)
+  assignedToId     String?
+  assignedTo       User?           @relation("SiteVisitAssignee", fields: [assignedToId], references: [id])
+  meetingPoint     String?
+  notes            String?
+  outcome          String?
   customerFeedback String?
-  completedAt  DateTime?       @db.Timestamptz(3)
-  createdById  String?         @db.Uuid
-  createdBy    User?           @relation("SiteVisitCreator", fields: [createdById], references: [id])
-  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
+  completedAt      DateTime?
+  createdById      String?
+  createdBy        User?           @relation("SiteVisitCreator", fields: [createdById], references: [id])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([assignedToId, scheduledAt])
   @@index([leadId])
@@ -2232,43 +2232,43 @@ model SiteVisit {
 
 /// A booking / deal recorded manually by the sales team (no online payments in v1).
 model Deal {
-  id                   String        @id @default(uuid(7)) @db.Uuid
+  id                   String        @id @default(uuid(7)) @map("_id")
   dealNo               String        @unique
-  organizationId       String        @db.Uuid
+  organizationId       String
   organization         Organization  @relation("DealOrg", fields: [organizationId], references: [id])
-  leadId               String?       @db.Uuid
+  leadId               String?
   lead                 Lead?         @relation(fields: [leadId], references: [id])
-  customerId           String        @db.Uuid
+  customerId           String
   customer             Customer      @relation(fields: [customerId], references: [id])
-  propertyId           String?       @db.Uuid
+  propertyId           String?
   property             Property?     @relation(fields: [propertyId], references: [id])
-  projectId            String?       @db.Uuid
+  projectId            String?
   project              Project?      @relation(fields: [projectId], references: [id])
-  unitId               String?       @db.Uuid
+  unitId               String?
   unit                 ProjectUnit?  @relation(fields: [unitId], references: [id])
   dealType             DealType      @default(SALE)
   status               DealStatus    @default(OPEN)
   /// Agreed property deal value (not money received)
-  dealValue            Decimal       @db.Decimal(14, 2)
+  dealValue            Float
   /// Expected company revenue (brokerage / margin) on this deal
-  expectedRevenue      Decimal?      @db.Decimal(14, 2)
-  bookingDate          DateTime?     @db.Date
-  agreementDate        DateTime?     @db.Date
-  closedAt             DateTime?     @db.Timestamptz(3)
-  cancelledAt          DateTime?     @db.Timestamptz(3)
+  expectedRevenue      Float?
+  bookingDate          DateTime?
+  agreementDate        DateTime?
+  closedAt             DateTime?
+  cancelledAt          DateTime?
   cancellationReason   String?
-  salesUserId          String?       @db.Uuid
+  salesUserId          String?
   salesUser            User?         @relation("DealSalesUser", fields: [salesUserId], references: [id])
-  brokerOrganizationId String?       @db.Uuid
+  brokerOrganizationId String?
   brokerOrganization   Organization? @relation("DealBrokerOrg", fields: [brokerOrganizationId], references: [id])
-  leadProviderId       String?       @db.Uuid
+  leadProviderId       String?
   leadProvider         LeadProvider? @relation(fields: [leadProviderId], references: [id])
   notes                String?
-  createdById          String?       @db.Uuid
+  createdById          String?
   createdBy            User?         @relation("DealCreatedBy", fields: [createdById], references: [id])
   isDemo               Boolean       @default(false)
-  createdAt            DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime      @updatedAt @db.Timestamptz(3)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   payments          DealPayment[]
   commissionRecords CommissionRecord[]
@@ -2282,18 +2282,18 @@ model Deal {
 
 /// Customer money received against a deal — tracked separately from company revenue.
 model DealPayment {
-  id            String          @id @default(uuid(7)) @db.Uuid
-  dealId        String          @db.Uuid
-  deal          Deal            @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  amount        Decimal         @db.Decimal(14, 2)
-  receivedOn    DateTime        @db.Date
-  receivedBy    PaymentReceiver @default(DEVELOPER)
-  method        PaymentMethod
-  referenceNo   String?
-  notes         String?
-  recordedById  String?         @db.Uuid
-  recordedBy    User?           @relation("DealPaymentRecorder", fields: [recordedById], references: [id])
-  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  id           String          @id @default(uuid(7)) @map("_id")
+  dealId       String
+  deal         Deal            @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  amount       Float
+  receivedOn   DateTime
+  receivedBy   PaymentReceiver @default(DEVELOPER)
+  method       PaymentMethod
+  referenceNo  String?
+  notes        String?
+  recordedById String?
+  recordedBy   User?           @relation("DealPaymentRecorder", fields: [recordedById], references: [id])
+  createdAt    DateTime        @default(now())
 
   @@index([dealId])
   @@map("deal_payments")
@@ -2302,19 +2302,19 @@ model DealPayment {
 // ═════════════════════════ Employees & HR ═════════════════════════
 
 model Department {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
   code           String
   description    String?
-  parentId       String?      @db.Uuid
-  parent         Department?  @relation("DepartmentTree", fields: [parentId], references: [id])
+  parentId       String?
+  parent         Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children       Department[] @relation("DepartmentTree")
-  headEmployeeId String?      @db.Uuid
+  headEmployeeId String?
   isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   employees    Employee[]
   designations Designation[]
@@ -2324,15 +2324,15 @@ model Department {
 }
 
 model Designation {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  departmentId   String?      @db.Uuid
+  departmentId   String?
   department     Department?  @relation(fields: [departmentId], references: [id])
   name           String
   level          Int          @default(1)
   isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
 
   employees Employee[]
 
@@ -2341,48 +2341,48 @@ model Designation {
 }
 
 model Employee {
-  id               String           @id @default(uuid(7)) @db.Uuid
-  organizationId   String           @db.Uuid
-  organization     Organization     @relation(fields: [organizationId], references: [id])
-  userId           String           @unique @db.Uuid
-  user             User             @relation(fields: [userId], references: [id])
-  employeeCode     String
-  departmentId     String?          @db.Uuid
-  department       Department?      @relation(fields: [departmentId], references: [id])
-  designationId    String?          @db.Uuid
-  designation      Designation?     @relation(fields: [designationId], references: [id])
-  managerId        String?          @db.Uuid
-  manager          Employee?        @relation("ReportingLine", fields: [managerId], references: [id])
-  reports          Employee[]       @relation("ReportingLine")
-  shiftId          String?          @db.Uuid
-  shift            Shift?           @relation(fields: [shiftId], references: [id])
-  joiningDate      DateTime         @db.Date
-  exitDate         DateTime?        @db.Date
-  employmentType   EmploymentType   @default(FULL_TIME)
-  employmentStatus EmploymentStatus @default(ACTIVE)
-  workLocation     String?
-  dateOfBirth      DateTime?        @db.Date
-  gender           String?
-  personalEmail    String?
-  emergencyContact String?
+  id                   String           @id @default(uuid(7)) @map("_id")
+  organizationId       String
+  organization         Organization     @relation(fields: [organizationId], references: [id])
+  userId               String           @unique
+  user                 User             @relation(fields: [userId], references: [id])
+  employeeCode         String
+  departmentId         String?
+  department           Department?      @relation(fields: [departmentId], references: [id])
+  designationId        String?
+  designation          Designation?     @relation(fields: [designationId], references: [id])
+  managerId            String?
+  manager              Employee?        @relation("ReportingLine", fields: [managerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reports              Employee[]       @relation("ReportingLine")
+  shiftId              String?
+  shift                Shift?           @relation(fields: [shiftId], references: [id])
+  joiningDate          DateTime
+  exitDate             DateTime?
+  employmentType       EmploymentType   @default(FULL_TIME)
+  employmentStatus     EmploymentStatus @default(ACTIVE)
+  workLocation         String?
+  dateOfBirth          DateTime?
+  gender               String?
+  personalEmail        String?
+  emergencyContact     String?
   /// AES-256-GCM encrypted at rest (DATA_ENCRYPTION_KEY)
   bankDetailsEncrypted String?
-  bankAccountLast4 String?
-  panEncrypted     String?
-  isDemo           Boolean          @default(false)
-  createdAt        DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime         @updatedAt @db.Timestamptz(3)
-  deletedAt        DateTime?        @db.Timestamptz(3)
+  bankAccountLast4     String?
+  panEncrypted         String?
+  isDemo               Boolean          @default(false)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  deletedAt            DateTime?
 
-  documents           EmployeeDocument[]
-  attendance          AttendanceRecord[]
+  documents             EmployeeDocument[]
+  attendance            AttendanceRecord[]
   attendanceCorrections AttendanceCorrection[]
-  leaveBalances       LeaveBalance[]
-  leaveRequests       LeaveRequest[]
-  salaryStructures    SalaryStructure[]
-  payslips            Payslip[]
-  adjustments         PayrollAdjustment[]
-  reimbursements      Reimbursement[]
+  leaveBalances         LeaveBalance[]
+  leaveRequests         LeaveRequest[]
+  salaryStructures      SalaryStructure[]
+  payslips              Payslip[]
+  adjustments           PayrollAdjustment[]
+  reimbursements        Reimbursement[]
 
   @@unique([organizationId, employeeCode])
   @@index([managerId])
@@ -2391,24 +2391,24 @@ model Employee {
 }
 
 model EmployeeDocument {
-  id           String               @id @default(uuid(7)) @db.Uuid
-  employeeId   String               @db.Uuid
+  id           String               @id @default(uuid(7)) @map("_id")
+  employeeId   String
   employee     Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   docType      EmployeeDocumentType
   title        String
-  fileId       String               @db.Uuid
+  fileId       String
   file         StoredFile           @relation(fields: [fileId], references: [id])
-  uploadedById String?              @db.Uuid
+  uploadedById String?
   uploadedBy   User?                @relation("EmpDocUploader", fields: [uploadedById], references: [id])
-  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+  createdAt    DateTime             @default(now())
 
   @@index([employeeId])
   @@map("employee_documents")
 }
 
 model Shift {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
   /// Local wall-clock times "HH:mm" in the shift timezone
@@ -2422,8 +2422,8 @@ model Shift {
   weeklyOffDays  Int[]        @default([0])
   timezone       String       @default("Asia/Kolkata")
   isDefault      Boolean      @default(false)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   employees Employee[]
 
@@ -2432,33 +2432,33 @@ model Shift {
 }
 
 model Holiday {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  date           DateTime     @db.Date
+  date           DateTime
   name           String
   isOptional     Boolean      @default(false)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
 
   @@unique([organizationId, date])
   @@map("holidays")
 }
 
 model AttendanceRecord {
-  id           String           @id @default(uuid(7)) @db.Uuid
-  employeeId   String           @db.Uuid
-  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  date         DateTime         @db.Date
-  checkInAt    DateTime?        @db.Timestamptz(3)
-  checkOutAt   DateTime?        @db.Timestamptz(3)
-  status       AttendanceStatus
-  isLate       Boolean          @default(false)
-  workMinutes  Int              @default(0)
-  source       AttendanceSource @default(WEB)
-  checkInIp    String?
-  notes        String?
-  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime         @updatedAt @db.Timestamptz(3)
+  id          String           @id @default(uuid(7)) @map("_id")
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date        DateTime
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  status      AttendanceStatus
+  isLate      Boolean          @default(false)
+  workMinutes Int              @default(0)
+  source      AttendanceSource @default(WEB)
+  checkInIp   String?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   corrections AttendanceCorrection[]
 
@@ -2468,39 +2468,39 @@ model AttendanceRecord {
 }
 
 model AttendanceCorrection {
-  id                String            @id @default(uuid(7)) @db.Uuid
-  employeeId        String            @db.Uuid
+  id                String            @id @default(uuid(7)) @map("_id")
+  employeeId        String
   employee          Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  attendanceId      String?           @db.Uuid
+  attendanceId      String?
   attendance        AttendanceRecord? @relation(fields: [attendanceId], references: [id])
-  date              DateTime          @db.Date
-  requestedCheckIn  DateTime?         @db.Timestamptz(3)
-  requestedCheckOut DateTime?         @db.Timestamptz(3)
+  date              DateTime
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
   reason            String
   status            ApprovalStatus    @default(PENDING)
-  reviewedById      String?           @db.Uuid
+  reviewedById      String?
   reviewedBy        User?             @relation("AttCorrectionReviewer", fields: [reviewedById], references: [id])
-  reviewedAt        DateTime?         @db.Timestamptz(3)
+  reviewedAt        DateTime?
   reviewNote        String?
-  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  createdAt         DateTime          @default(now())
 
   @@index([employeeId, status])
   @@map("attendance_corrections")
 }
 
 model LeaveType {
-  id               String       @id @default(uuid(7)) @db.Uuid
-  organizationId   String       @db.Uuid
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  name             String
-  code             String
-  isPaid           Boolean      @default(true)
-  annualQuota      Decimal      @db.Decimal(5, 1)
-  carryForward     Boolean      @default(false)
-  maxCarryForward  Decimal?     @db.Decimal(5, 1)
-  allowHalfDay     Boolean      @default(true)
-  isActive         Boolean      @default(true)
-  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  id              String       @id @default(uuid(7)) @map("_id")
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  name            String
+  code            String
+  isPaid          Boolean      @default(true)
+  annualQuota     Float
+  carryForward    Boolean      @default(false)
+  maxCarryForward Float?
+  allowHalfDay    Boolean      @default(true)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
 
   balances LeaveBalance[]
   requests LeaveRequest[]
@@ -2510,40 +2510,40 @@ model LeaveType {
 }
 
 model LeaveBalance {
-  id             String    @id @default(uuid(7)) @db.Uuid
-  employeeId     String    @db.Uuid
+  id             String    @id @default(uuid(7)) @map("_id")
+  employeeId     String
   employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveTypeId    String    @db.Uuid
+  leaveTypeId    String
   leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id])
   year           Int
-  allocated      Decimal   @db.Decimal(5, 1)
-  carriedForward Decimal   @default(0) @db.Decimal(5, 1)
-  used           Decimal   @default(0) @db.Decimal(5, 1)
-  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  allocated      Float
+  carriedForward Float     @default(0)
+  used           Float     @default(0)
+  updatedAt      DateTime  @updatedAt
 
   @@unique([employeeId, leaveTypeId, year])
   @@map("leave_balances")
 }
 
 model LeaveRequest {
-  id           String         @id @default(uuid(7)) @db.Uuid
-  employeeId   String         @db.Uuid
+  id           String         @id @default(uuid(7)) @map("_id")
+  employeeId   String
   employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveTypeId  String         @db.Uuid
+  leaveTypeId  String
   leaveType    LeaveType      @relation(fields: [leaveTypeId], references: [id])
-  startDate    DateTime       @db.Date
-  endDate      DateTime       @db.Date
+  startDate    DateTime
+  endDate      DateTime
   halfDayStart Boolean        @default(false)
   halfDayEnd   Boolean        @default(false)
-  days         Decimal        @db.Decimal(5, 1)
+  days         Float
   reason       String
   status       ApprovalStatus @default(PENDING)
-  approverId   String?        @db.Uuid
+  approverId   String?
   approver     User?          @relation("LeaveApprover", fields: [approverId], references: [id])
-  decidedAt    DateTime?      @db.Timestamptz(3)
+  decidedAt    DateTime?
   decisionNote String?
-  createdAt    DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime       @updatedAt @db.Timestamptz(3)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@index([employeeId, status])
   @@index([status, startDate])
@@ -2551,23 +2551,23 @@ model LeaveRequest {
 }
 
 model EmployeeTask {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   title          String
   description    String?
-  assignedToId   String       @db.Uuid
+  assignedToId   String
   assignedTo     User         @relation("TaskAssignee", fields: [assignedToId], references: [id])
-  createdById    String?      @db.Uuid
+  createdById    String?
   createdBy      User?        @relation("TaskCreator", fields: [createdById], references: [id])
-  leadId         String?      @db.Uuid
+  leadId         String?
   lead           Lead?        @relation(fields: [leadId], references: [id])
-  dueAt          DateTime?    @db.Timestamptz(3)
+  dueAt          DateTime?
   priority       TaskPriority @default(MEDIUM)
   status         TaskStatus   @default(TODO)
-  completedAt    DateTime?    @db.Timestamptz(3)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@index([assignedToId, status])
   @@map("employee_tasks")
@@ -2577,25 +2577,25 @@ model EmployeeTask {
 
 /// Configurable salary components. Formulas are documented in docs/workflows/payroll.md.
 model SalaryComponent {
-  id                  String              @id @default(uuid(7)) @db.Uuid
-  organizationId      String              @db.Uuid
+  id                  String              @id @default(uuid(7)) @map("_id")
+  organizationId      String
   organization        Organization        @relation(fields: [organizationId], references: [id])
   code                String
   name                String
   type                SalaryComponentType
   calcType            SalaryCalcType      @default(FIXED)
   /// Default amount (FIXED) or percentage (PERCENT_OF_*) used when a structure line omits a value
-  defaultValue        Decimal?            @db.Decimal(14, 4)
+  defaultValue        Float?
   /// Optional monthly cap applied after calculation
-  maxAmount           Decimal?            @db.Decimal(14, 2)
+  maxAmount           Float?
   isStatutory         Boolean             @default(false)
   isTaxable           Boolean             @default(true)
   prorateByAttendance Boolean             @default(true)
   description         String?
   sortOrder           Int                 @default(0)
   isActive            Boolean             @default(true)
-  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime            @updatedAt @db.Timestamptz(3)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   structureLines SalaryStructureLine[]
 
@@ -2604,16 +2604,16 @@ model SalaryComponent {
 }
 
 model SalaryStructure {
-  id            String    @id @default(uuid(7)) @db.Uuid
-  employeeId    String    @db.Uuid
+  id            String    @id @default(uuid(7)) @map("_id")
+  employeeId    String
   employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  effectiveFrom DateTime  @db.Date
-  effectiveTo   DateTime? @db.Date
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
   isActive      Boolean   @default(true)
   notes         String?
-  createdById   String?   @db.Uuid
+  createdById   String?
   createdBy     User?     @relation("SalaryStructureCreator", fields: [createdById], references: [id])
-  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime  @default(now())
 
   lines    SalaryStructureLine[]
   payslips Payslip[]
@@ -2623,43 +2623,43 @@ model SalaryStructure {
 }
 
 model SalaryStructureLine {
-  id          String          @id @default(uuid(7)) @db.Uuid
-  structureId String          @db.Uuid
+  id          String          @id @default(uuid(7)) @map("_id")
+  structureId String
   structure   SalaryStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
-  componentId String          @db.Uuid
+  componentId String
   component   SalaryComponent @relation(fields: [componentId], references: [id])
   /// Monthly amount for FIXED components, percentage for PERCENT_OF_* components
-  value       Decimal         @db.Decimal(14, 4)
+  value       Float
 
   @@unique([structureId, componentId])
   @@map("salary_structure_components")
 }
 
 model PayrollRun {
-  id             String        @id @default(uuid(7)) @db.Uuid
-  organizationId String        @db.Uuid
-  organization   Organization  @relation(fields: [organizationId], references: [id])
-  periodYear     Int
-  periodMonth    Int
-  periodStart    DateTime      @db.Date
-  periodEnd      DateTime      @db.Date
-  status         PayrollStatus @default(DRAFT)
-  workingDays    Int           @default(0)
-  totalGross     Decimal       @default(0) @db.Decimal(16, 2)
-  totalDeductions Decimal      @default(0) @db.Decimal(16, 2)
-  totalNet       Decimal       @default(0) @db.Decimal(16, 2)
-  notes          String?
-  createdById    String?       @db.Uuid
-  createdBy      User?         @relation("PayrollCreatedBy", fields: [createdById], references: [id])
-  calculatedById String?       @db.Uuid
-  calculatedBy   User?         @relation("PayrollCalculatedBy", fields: [calculatedById], references: [id])
-  calculatedAt   DateTime?     @db.Timestamptz(3)
-  approvedById   String?       @db.Uuid
-  approvedBy     User?         @relation("PayrollApprovedBy", fields: [approvedById], references: [id])
-  approvedAt     DateTime?     @db.Timestamptz(3)
-  paidAt         DateTime?     @db.Timestamptz(3)
-  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+  id              String        @id @default(uuid(7)) @map("_id")
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  periodYear      Int
+  periodMonth     Int
+  periodStart     DateTime
+  periodEnd       DateTime
+  status          PayrollStatus @default(DRAFT)
+  workingDays     Int           @default(0)
+  totalGross      Float         @default(0)
+  totalDeductions Float         @default(0)
+  totalNet        Float         @default(0)
+  notes           String?
+  createdById     String?
+  createdBy       User?         @relation("PayrollCreatedBy", fields: [createdById], references: [id])
+  calculatedById  String?
+  calculatedBy    User?         @relation("PayrollCalculatedBy", fields: [calculatedById], references: [id])
+  calculatedAt    DateTime?
+  approvedById    String?
+  approvedBy      User?         @relation("PayrollApprovedBy", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   payslips    Payslip[]
   adjustments PayrollAdjustment[]
@@ -2669,22 +2669,22 @@ model PayrollRun {
 }
 
 model Payslip {
-  id              String          @id @default(uuid(7)) @db.Uuid
-  payrollRunId    String          @db.Uuid
-  payrollRun      PayrollRun      @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
-  employeeId      String          @db.Uuid
-  employee        Employee        @relation(fields: [employeeId], references: [id])
-  structureId     String?         @db.Uuid
+  id              String           @id @default(uuid(7)) @map("_id")
+  payrollRunId    String
+  payrollRun      PayrollRun       @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee         @relation(fields: [employeeId], references: [id])
+  structureId     String?
   structure       SalaryStructure? @relation(fields: [structureId], references: [id])
-  workingDays     Decimal         @db.Decimal(5, 1)
-  payableDays     Decimal         @db.Decimal(5, 1)
-  lopDays         Decimal         @db.Decimal(5, 1)
-  grossEarnings   Decimal         @db.Decimal(14, 2)
-  totalDeductions Decimal         @db.Decimal(14, 2)
-  netPay          Decimal         @db.Decimal(14, 2)
-  status          PayslipStatus   @default(DRAFT)
-  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime        @updatedAt @db.Timestamptz(3)
+  workingDays     Float
+  payableDays     Float
+  lopDays         Float
+  grossEarnings   Float
+  totalDeductions Float
+  netPay          Float
+  status          PayslipStatus    @default(DRAFT)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   lines    PayslipLine[]
   payments SalaryPayment[]
@@ -2695,13 +2695,13 @@ model Payslip {
 }
 
 model PayslipLine {
-  id            String              @id @default(uuid(7)) @db.Uuid
-  payslipId     String              @db.Uuid
+  id            String              @id @default(uuid(7)) @map("_id")
+  payslipId     String
   payslip       Payslip             @relation(fields: [payslipId], references: [id], onDelete: Cascade)
   componentCode String
   componentName String
   type          SalaryComponentType
-  amount        Decimal             @db.Decimal(14, 2)
+  amount        Float
   /// Human-readable explanation of how the amount was calculated
   calculation   String
   sortOrder     Int                 @default(0)
@@ -2711,17 +2711,17 @@ model PayslipLine {
 }
 
 model SalaryPayment {
-  id           String        @id @default(uuid(7)) @db.Uuid
-  payslipId    String        @db.Uuid
+  id           String        @id @default(uuid(7)) @map("_id")
+  payslipId    String
   payslip      Payslip       @relation(fields: [payslipId], references: [id], onDelete: Cascade)
-  amount       Decimal       @db.Decimal(14, 2)
-  paidOn       DateTime      @db.Date
+  amount       Float
+  paidOn       DateTime
   method       PaymentMethod
   referenceNo  String?
   notes        String?
-  recordedById String?       @db.Uuid
+  recordedById String?
   recordedBy   User?         @relation("SalaryPaymentRecorder", fields: [recordedById], references: [id])
-  createdAt    DateTime      @default(now()) @db.Timestamptz(3)
+  createdAt    DateTime      @default(now())
 
   transactions FinanceTransaction[]
 
@@ -2731,22 +2731,22 @@ model SalaryPayment {
 
 /// One-off additions/deductions for a payroll period (incentives, bonuses, recoveries).
 model PayrollAdjustment {
-  id           String                @id @default(uuid(7)) @db.Uuid
-  employeeId   String                @db.Uuid
+  id           String                @id @default(uuid(7)) @map("_id")
+  employeeId   String
   employee     Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   periodYear   Int
   periodMonth  Int
   type         PayrollAdjustmentType
-  amount       Decimal               @db.Decimal(14, 2)
+  amount       Float
   description  String
   /// e.g. "COMMISSION:<commissionRecordId>" when generated from a commission
   sourceRef    String?
   status       AdjustmentStatus      @default(PENDING)
-  payrollRunId String?               @db.Uuid
+  payrollRunId String?
   payrollRun   PayrollRun?           @relation(fields: [payrollRunId], references: [id])
-  createdById  String?               @db.Uuid
+  createdById  String?
   createdBy    User?                 @relation("AdjustmentCreator", fields: [createdById], references: [id])
-  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
+  createdAt    DateTime              @default(now())
 
   @@index([employeeId, periodYear, periodMonth])
   @@map("payroll_adjustments")
@@ -2756,34 +2756,34 @@ model PayrollAdjustment {
 
 /// Configurable commission rules. No rates are hard-coded.
 model CommissionRule {
-  id                   String                  @id @default(uuid(7)) @db.Uuid
-  organizationId       String                  @db.Uuid
+  id                   String                  @id @default(uuid(7)) @map("_id")
+  organizationId       String
   organization         Organization            @relation("CommissionRuleOrg", fields: [organizationId], references: [id])
   name                 String
   recipientType        CommissionRecipientType
   calcType             CommissionCalcType
   /// Fixed amount (INR) or percentage depending on calcType
-  value                Decimal                 @db.Decimal(14, 4)
+  value                Float
   basis                CommissionBasis         @default(DEAL_VALUE)
   dealType             DealType?
-  projectId            String?                 @db.Uuid
+  projectId            String?
   project              Project?                @relation(fields: [projectId], references: [id])
-  propertyTypeId       String?                 @db.Uuid
+  propertyTypeId       String?
   propertyType         PropertyType?           @relation(fields: [propertyTypeId], references: [id])
-  cityId               String?                 @db.Uuid
+  cityId               String?
   city                 City?                   @relation(fields: [cityId], references: [id])
-  leadProviderId       String?                 @db.Uuid
+  leadProviderId       String?
   leadProvider         LeadProvider?           @relation(fields: [leadProviderId], references: [id])
-  brokerOrganizationId String?                 @db.Uuid
+  brokerOrganizationId String?
   brokerOrganization   Organization?           @relation("CommissionRuleBrokerOrg", fields: [brokerOrganizationId], references: [id])
-  minDealValue         Decimal?                @db.Decimal(14, 2)
-  maxPayout            Decimal?                @db.Decimal(14, 2)
+  minDealValue         Float?
+  maxPayout            Float?
   priority             Int                     @default(100)
   isActive             Boolean                 @default(true)
-  effectiveFrom        DateTime?               @db.Date
-  effectiveTo          DateTime?               @db.Date
-  createdAt            DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime                @updatedAt @db.Timestamptz(3)
+  effectiveFrom        DateTime?
+  effectiveTo          DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
 
   records CommissionRecord[]
 
@@ -2792,33 +2792,33 @@ model CommissionRule {
 }
 
 model CommissionRecord {
-  id                      String                  @id @default(uuid(7)) @db.Uuid
-  organizationId          String                  @db.Uuid
+  id                      String                  @id @default(uuid(7)) @map("_id")
+  organizationId          String
   organization            Organization            @relation("CommissionOrg", fields: [organizationId], references: [id])
-  dealId                  String                  @db.Uuid
+  dealId                  String
   deal                    Deal                    @relation(fields: [dealId], references: [id])
-  ruleId                  String?                 @db.Uuid
+  ruleId                  String?
   rule                    CommissionRule?         @relation(fields: [ruleId], references: [id])
   recipientType           CommissionRecipientType
-  recipientUserId         String?                 @db.Uuid
+  recipientUserId         String?
   recipientUser           User?                   @relation("CommissionRecipientUser", fields: [recipientUserId], references: [id])
-  recipientOrganizationId String?                 @db.Uuid
+  recipientOrganizationId String?
   recipientOrganization   Organization?           @relation("CommissionRecipientOrg", fields: [recipientOrganizationId], references: [id])
-  leadProviderId          String?                 @db.Uuid
+  leadProviderId          String?
   leadProvider            LeadProvider?           @relation(fields: [leadProviderId], references: [id])
   recipientName           String
-  basisAmount             Decimal                 @db.Decimal(14, 2)
+  basisAmount             Float
   calcType                CommissionCalcType
-  rate                    Decimal                 @db.Decimal(14, 4)
-  amount                  Decimal                 @db.Decimal(14, 2)
-  amountPaid              Decimal                 @default(0) @db.Decimal(14, 2)
+  rate                    Float
+  amount                  Float
+  amountPaid              Float                   @default(0)
   status                  CommissionStatus        @default(PENDING_APPROVAL)
-  approvedById            String?                 @db.Uuid
+  approvedById            String?
   approvedBy              User?                   @relation("CommissionApprover", fields: [approvedById], references: [id])
-  approvedAt              DateTime?               @db.Timestamptz(3)
+  approvedAt              DateTime?
   notes                   String?
-  createdAt               DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt               DateTime                @updatedAt @db.Timestamptz(3)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
 
   payoutItems CommissionPayoutItem[]
 
@@ -2831,28 +2831,28 @@ model CommissionRecord {
 }
 
 model CommissionPayout {
-  id                      String                  @id @default(uuid(7)) @db.Uuid
+  id                      String                  @id @default(uuid(7)) @map("_id")
   payoutNo                String                  @unique
-  organizationId          String                  @db.Uuid
+  organizationId          String
   organization            Organization            @relation("PayoutOrg", fields: [organizationId], references: [id])
   recipientType           CommissionRecipientType
-  recipientUserId         String?                 @db.Uuid
+  recipientUserId         String?
   recipientUser           User?                   @relation("PayoutRecipientUser", fields: [recipientUserId], references: [id])
-  recipientOrganizationId String?                 @db.Uuid
+  recipientOrganizationId String?
   recipientOrganization   Organization?           @relation("PayoutRecipientOrg", fields: [recipientOrganizationId], references: [id])
-  leadProviderId          String?                 @db.Uuid
+  leadProviderId          String?
   leadProvider            LeadProvider?           @relation(fields: [leadProviderId], references: [id])
   recipientName           String
-  totalAmount             Decimal                 @db.Decimal(14, 2)
+  totalAmount             Float
   status                  PayoutStatus            @default(PENDING)
   method                  PaymentMethod?
   referenceNo             String?
-  paidOn                  DateTime?               @db.Date
+  paidOn                  DateTime?
   notes                   String?
-  recordedById            String?                 @db.Uuid
+  recordedById            String?
   recordedBy              User?                   @relation("PayoutRecorder", fields: [recordedById], references: [id])
-  createdAt               DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt               DateTime                @updatedAt @db.Timestamptz(3)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
 
   items        CommissionPayoutItem[]
   transactions FinanceTransaction[]
@@ -2862,12 +2862,12 @@ model CommissionPayout {
 }
 
 model CommissionPayoutItem {
-  id                 String           @id @default(uuid(7)) @db.Uuid
-  payoutId           String           @db.Uuid
+  id                 String           @id @default(uuid(7)) @map("_id")
+  payoutId           String
   payout             CommissionPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
-  commissionRecordId String           @db.Uuid
+  commissionRecordId String
   commissionRecord   CommissionRecord @relation(fields: [commissionRecordId], references: [id])
-  amount             Decimal          @db.Decimal(14, 2)
+  amount             Float
 
   @@unique([payoutId, commissionRecordId])
   @@map("commission_payout_items")
@@ -2877,33 +2877,33 @@ model CommissionPayoutItem {
 
 /// Ledger of money actually moving in or out of the company.
 model FinanceTransaction {
-  id              String               @id @default(uuid(7)) @db.Uuid
+  id              String               @id @default(uuid(7)) @map("_id")
   txnNo           String               @unique
-  organizationId  String               @db.Uuid
+  organizationId  String
   organization    Organization         @relation(fields: [organizationId], references: [id])
   type            TransactionType
   direction       TransactionDirection
-  amount          Decimal              @db.Decimal(14, 2)
-  txnDate         DateTime             @db.Date
+  amount          Float
+  txnDate         DateTime
   method          PaymentMethod
   referenceNo     String?
   counterparty    String?
   description     String?
-  dealId          String?              @db.Uuid
+  dealId          String?
   deal            Deal?                @relation(fields: [dealId], references: [id])
-  invoiceId       String?              @db.Uuid
+  invoiceId       String?
   invoice         Invoice?             @relation(fields: [invoiceId], references: [id])
-  expenseId       String?              @db.Uuid
+  expenseId       String?
   expense         Expense?             @relation(fields: [expenseId], references: [id])
-  payoutId        String?              @db.Uuid
+  payoutId        String?
   payout          CommissionPayout?    @relation(fields: [payoutId], references: [id])
-  salaryPaymentId String?              @db.Uuid
+  salaryPaymentId String?
   salaryPayment   SalaryPayment?       @relation(fields: [salaryPaymentId], references: [id])
-  reimbursementId String?              @db.Uuid
+  reimbursementId String?
   reimbursement   Reimbursement?       @relation(fields: [reimbursementId], references: [id])
-  recordedById    String?              @db.Uuid
+  recordedById    String?
   recordedBy      User?                @relation("TxnRecorder", fields: [recordedById], references: [id])
-  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  createdAt       DateTime             @default(now())
 
   @@index([organizationId, txnDate])
   @@index([type])
@@ -2911,12 +2911,12 @@ model FinanceTransaction {
 }
 
 model ExpenseCategory {
-  id             String       @id @default(uuid(7)) @db.Uuid
-  organizationId String       @db.Uuid
+  id             String       @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
   isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime     @default(now())
 
   expenses Expense[]
 
@@ -2925,26 +2925,26 @@ model ExpenseCategory {
 }
 
 model Expense {
-  id             String          @id @default(uuid(7)) @db.Uuid
-  organizationId String          @db.Uuid
+  id             String          @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id])
-  categoryId     String          @db.Uuid
+  categoryId     String
   category       ExpenseCategory @relation(fields: [categoryId], references: [id])
-  amount         Decimal         @db.Decimal(14, 2)
-  expenseDate    DateTime        @db.Date
+  amount         Float
+  expenseDate    DateTime
   vendor         String?
   description    String
   status         ExpenseStatus   @default(PENDING)
-  receiptFileId  String?         @db.Uuid
+  receiptFileId  String?
   receiptFile    StoredFile?     @relation(fields: [receiptFileId], references: [id])
-  createdById    String?         @db.Uuid
+  createdById    String?
   createdBy      User?           @relation("ExpenseCreator", fields: [createdById], references: [id])
-  approvedById   String?         @db.Uuid
+  approvedById   String?
   approvedBy     User?           @relation("ExpenseApprover", fields: [approvedById], references: [id])
-  approvedAt     DateTime?       @db.Timestamptz(3)
-  paidAt         DateTime?       @db.Timestamptz(3)
-  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime        @updatedAt @db.Timestamptz(3)
+  approvedAt     DateTime?
+  paidAt         DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   transactions FinanceTransaction[]
 
@@ -2953,31 +2953,31 @@ model Expense {
 }
 
 model Invoice {
-  id                String        @id @default(uuid(7)) @db.Uuid
-  invoiceNo         String        @unique
-  organizationId    String        @db.Uuid
-  organization      Organization  @relation("InvoiceIssuerOrg", fields: [organizationId], references: [id])
-  billToName        String
-  billToAddress     String?
-  billToGstin       String?
-  billToOrganizationId String?    @db.Uuid
-  billToOrganization Organization? @relation("InvoiceBillToOrg", fields: [billToOrganizationId], references: [id])
-  customerId        String?       @db.Uuid
-  customer          Customer?     @relation(fields: [customerId], references: [id])
-  dealId            String?       @db.Uuid
-  deal              Deal?         @relation(fields: [dealId], references: [id])
-  issueDate         DateTime      @db.Date
-  dueDate           DateTime?     @db.Date
-  status            InvoiceStatus @default(DRAFT)
-  subtotal          Decimal       @db.Decimal(14, 2)
-  taxTotal          Decimal       @db.Decimal(14, 2)
-  total             Decimal       @db.Decimal(14, 2)
-  amountPaid        Decimal       @default(0) @db.Decimal(14, 2)
-  notes             String?
-  createdById       String?       @db.Uuid
-  createdBy         User?         @relation("InvoiceCreator", fields: [createdById], references: [id])
-  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
+  id                   String        @id @default(uuid(7)) @map("_id")
+  invoiceNo            String        @unique
+  organizationId       String
+  organization         Organization  @relation("InvoiceIssuerOrg", fields: [organizationId], references: [id])
+  billToName           String
+  billToAddress        String?
+  billToGstin          String?
+  billToOrganizationId String?
+  billToOrganization   Organization? @relation("InvoiceBillToOrg", fields: [billToOrganizationId], references: [id])
+  customerId           String?
+  customer             Customer?     @relation(fields: [customerId], references: [id])
+  dealId               String?
+  deal                 Deal?         @relation(fields: [dealId], references: [id])
+  issueDate            DateTime
+  dueDate              DateTime?
+  status               InvoiceStatus @default(DRAFT)
+  subtotal             Float
+  taxTotal             Float
+  total                Float
+  amountPaid           Float         @default(0)
+  notes                String?
+  createdById          String?
+  createdBy            User?         @relation("InvoiceCreator", fields: [createdById], references: [id])
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   lines        InvoiceLine[]
   transactions FinanceTransaction[]
@@ -2987,16 +2987,16 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id          String  @id @default(uuid(7)) @db.Uuid
-  invoiceId   String  @db.Uuid
+  id          String  @id @default(uuid(7)) @map("_id")
+  invoiceId   String
   invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
-  quantity    Decimal @db.Decimal(10, 2)
-  unitPrice   Decimal @db.Decimal(14, 2)
+  quantity    Float
+  unitPrice   Float
   /// Tax rate entered per line (configurable; never assumed)
-  taxRate     Decimal @default(0) @db.Decimal(6, 3)
-  amount      Decimal @db.Decimal(14, 2)
-  taxAmount   Decimal @db.Decimal(14, 2)
+  taxRate     Float   @default(0)
+  amount      Float
+  taxAmount   Float
   sortOrder   Int     @default(0)
 
   @@index([invoiceId])
@@ -3004,26 +3004,26 @@ model InvoiceLine {
 }
 
 model Reimbursement {
-  id             String              @id @default(uuid(7)) @db.Uuid
-  organizationId String              @db.Uuid
+  id             String              @id @default(uuid(7)) @map("_id")
+  organizationId String
   organization   Organization        @relation(fields: [organizationId], references: [id])
-  employeeId     String              @db.Uuid
+  employeeId     String
   employee       Employee            @relation(fields: [employeeId], references: [id])
   title          String
   category       String
-  amount         Decimal             @db.Decimal(14, 2)
-  expenseDate    DateTime            @db.Date
+  amount         Float
+  expenseDate    DateTime
   description    String?
-  receiptFileId  String?             @db.Uuid
+  receiptFileId  String?
   receiptFile    StoredFile?         @relation(fields: [receiptFileId], references: [id])
   status         ReimbursementStatus @default(SUBMITTED)
-  approverId     String?             @db.Uuid
+  approverId     String?
   approver       User?               @relation("ReimbursementApprover", fields: [approverId], references: [id])
-  decidedAt      DateTime?           @db.Timestamptz(3)
+  decidedAt      DateTime?
   decisionNote   String?
-  paidAt         DateTime?           @db.Timestamptz(3)
-  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime            @updatedAt @db.Timestamptz(3)
+  paidAt         DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   transactions FinanceTransaction[]
 
@@ -3034,7 +3034,7 @@ model Reimbursement {
 // ═════════════════════════ CMS & SEO ═════════════════════════
 
 model CmsPage {
-  id             String        @id @default(uuid(7)) @db.Uuid
+  id             String        @id @default(uuid(7)) @map("_id")
   slug           String        @unique
   title          String
   /// Validated content blocks (see @estate/shared cms schemas) — never raw HTML
@@ -3047,18 +3047,18 @@ model CmsPage {
   canonicalUrl   String?
   ogImageUrl     String?
   noIndex        Boolean       @default(false)
-  publishedAt    DateTime?     @db.Timestamptz(3)
-  updatedById    String?       @db.Uuid
+  publishedAt    DateTime?
+  updatedById    String?
   updatedBy      User?         @relation("CmsPageUpdater", fields: [updatedById], references: [id])
-  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@map("cms_pages")
 }
 
 /// Homepage (and other page) section configuration.
 model CmsSection {
-  id        String   @id @default(uuid(7)) @db.Uuid
+  id        String   @id @default(uuid(7)) @map("_id")
   pageKey   String
   type      String
   title     String?
@@ -3066,15 +3066,15 @@ model CmsSection {
   config    Json     @default("{}")
   sortOrder Int      @default(0)
   isVisible Boolean  @default(true)
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([pageKey, sortOrder])
   @@map("cms_sections")
 }
 
 model CmsBanner {
-  id        String    @id @default(uuid(7)) @db.Uuid
+  id        String    @id @default(uuid(7)) @map("_id")
   placement String
   title     String
   subtitle  String?
@@ -3082,50 +3082,50 @@ model CmsBanner {
   linkUrl   String?
   sortOrder Int       @default(0)
   isActive  Boolean   @default(true)
-  startsAt  DateTime? @db.Timestamptz(3)
-  endsAt    DateTime? @db.Timestamptz(3)
-  createdAt DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([placement, isActive])
   @@map("cms_banners")
 }
 
 model CmsMedia {
-  id        String     @id @default(uuid(7)) @db.Uuid
-  fileId    String     @db.Uuid
+  id        String     @id @default(uuid(7)) @map("_id")
+  fileId    String
   file      StoredFile @relation(fields: [fileId], references: [id])
   url       String
   altText   String?
   folder    String     @default("general")
-  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  createdAt DateTime   @default(now())
 
   @@map("cms_media")
 }
 
 model Faq {
-  id          String   @id @default(uuid(7)) @db.Uuid
+  id          String   @id @default(uuid(7)) @map("_id")
   category    String   @default("General")
   question    String
   answer      String
   sortOrder   Int      @default(0)
   isPublished Boolean  @default(true)
-  createdAt   DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@map("faqs")
 }
 
 model SeoOverride {
-  id             String   @id @default(uuid(7)) @db.Uuid
-  path           String   @unique
-  title          String?
-  description    String?
-  canonicalUrl   String?
-  ogImageUrl     String?
-  noIndex        Boolean  @default(false)
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  id           String   @id @default(uuid(7)) @map("_id")
+  path         String   @unique
+  title        String?
+  description  String?
+  canonicalUrl String?
+  ogImageUrl   String?
+  noIndex      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@map("seo_overrides")
 }
@@ -3133,30 +3133,30 @@ model SeoOverride {
 // ═════════════════════════ Notifications ═════════════════════════
 
 model NotificationTemplate {
-  id        String              @id @default(uuid(7)) @db.Uuid
+  id        String              @id @default(uuid(7)) @map("_id")
   eventKey  String
   channel   NotificationChannel
   subject   String?
   /// Plain text with {{placeholders}}; rendered with escaping, never as HTML/JS
   body      String
   isActive  Boolean             @default(true)
-  createdAt DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime            @updatedAt @db.Timestamptz(3)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
 
   @@unique([eventKey, channel])
   @@map("notification_templates")
 }
 
 model Notification {
-  id        String    @id @default(uuid(7)) @db.Uuid
-  userId    String    @db.Uuid
+  id        String    @id @default(uuid(7)) @map("_id")
+  userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   eventKey  String
   title     String
   body      String
   link      String?
-  readAt    DateTime? @db.Timestamptz(3)
-  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([userId, readAt, createdAt])
   @@map("notifications")
@@ -3164,11 +3164,11 @@ model Notification {
 
 /// Every outbound message attempt. Status reflects the provider's real response — never assumed.
 model CommunicationLog {
-  id                String              @id @default(uuid(7)) @db.Uuid
+  id                String              @id @default(uuid(7)) @map("_id")
   channel           NotificationChannel
   eventKey          String
   recipient         String
-  recipientUserId   String?             @db.Uuid
+  recipientUserId   String?
   recipientUser     User?               @relation("CommRecipient", fields: [recipientUserId], references: [id])
   subject           String?
   body              String
@@ -3177,13 +3177,13 @@ model CommunicationLog {
   providerMessageId String?
   attempts          Int                 @default(0)
   /// Outbox scheduling: when the next delivery attempt is due (NULL once final)
-  nextAttemptAt     DateTime?           @default(now()) @db.Timestamptz(3)
+  nextAttemptAt     DateTime?           @default(now())
   lastError         String?
   relatedType       String?
   relatedId         String?
-  sentAt            DateTime?           @db.Timestamptz(3)
-  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
+  sentAt            DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   @@index([status, nextAttemptAt])
   @@index([status, createdAt])
@@ -3194,19 +3194,19 @@ model CommunicationLog {
 // ═════════════════════════ System ═════════════════════════
 
 model AuditLog {
-  id             String   @id @default(uuid(7)) @db.Uuid
-  actorId        String?  @db.Uuid
+  id             String   @id @default(uuid(7)) @map("_id")
+  actorId        String?
   actor          User?    @relation("AuditActor", fields: [actorId], references: [id])
   actorIp        String?
   action         String
   entityType     String
   entityId       String?
   /// Organisation context (no FK so the trail outlives the entity)
-  organizationId String?  @db.Uuid
+  organizationId String?
   before         Json?
   after          Json?
   metadata       Json?
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  createdAt      DateTime @default(now())
 
   @@index([entityType, entityId])
   @@index([actorId, createdAt])
@@ -3215,32 +3215,53 @@ model AuditLog {
 }
 
 model SystemSetting {
-  key         String   @id
+  key         String   @id @map("_id")
   value       Json
   group       String
   /// Public settings are exposed (read-only) to the public website
   isPublic    Boolean  @default(false)
   description String?
-  updatedById String?  @db.Uuid
+  updatedById String?
   updatedBy   User?    @relation("SettingUpdater", fields: [updatedById], references: [id])
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt
 
   @@map("system_settings")
 }
 
 model FeatureFlag {
-  key         String   @id
+  key         String   @id @map("_id")
   enabled     Boolean  @default(false)
   description String?
-  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt
 
   @@map("feature_flags")
 }
 
 /// Atomic per-key counters for human-readable reference numbers (ENQ-2026-000123).
 model ReferenceCounter {
-  key   String @id
+  key   String @id @map("_id")
   value Int    @default(0)
 
   @@map("reference_counters")
+}
+
+/// Lease that keeps a scheduled job on one API instance at a time (PrismaService.withJobLock).
+/// An instance that crashes mid-job loses the lease when expiresAt passes.
+model JobLock {
+  key       String   @id @map("_id")
+  owner     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("job_locks")
+}
+
+/// Written inside a transaction to serialise transactions on the same key (lockInTransaction):
+/// MongoDB aborts the later writer with a write conflict and PrismaService retries it.
+model TransactionLock {
+  key       String   @id @map("_id")
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("transaction_locks")
 }

@@ -213,7 +213,7 @@ export class PropertyReportsController {
   }
 }
 
-/** Hourly listing maintenance (single-instance via advisory lock). */
+/** Hourly listing maintenance (single-instance via a job lease). */
 @Injectable()
 export class PropertiesScheduler {
   private readonly logger = new Logger('PropertiesScheduler');
@@ -226,7 +226,7 @@ export class PropertiesScheduler {
   @Cron(CronExpression.EVERY_30_MINUTES)
   async run(): Promise<void> {
     if (env().APP_ENV === 'test') return;
-    const expired = await this.prisma.withAdvisoryLock('jobs:property-expiry', (tx) => this.properties.expireListings(tx));
+    const expired = await this.prisma.withJobLock('jobs:property-expiry', (tx) => this.properties.expireListings(tx));
     if (expired) this.logger.log(`Expired ${expired} listing(s)`);
   }
 }

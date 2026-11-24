@@ -3,17 +3,18 @@ import type { Db } from '../prisma/prisma.service';
 import { randomBytes } from 'node:crypto';
 
 /**
- * Atomic, gap-tolerant sequence per prefix and year: ENQ-2026-000123.
- * Uses INSERT … ON CONFLICT DO UPDATE … RETURNING, safe under concurrency.
+ * Atomic sequence per prefix and year: ENQ-2026-000123.
+ * One findAndModify (upsert + $inc) — atomic under concurrency; inside a transaction it commits or
+ * rolls back with it, and two transactions taking the same number conflict (and are retried).
  */
 export async function nextReference(db: Db, prefix: string, now: Date = new Date()): Promise<string> {
   const year = now.getUTCFullYear();
   const key = `${prefix}-${year}`;
-  const rows = await db.$queryRaw<{ value: number }[]>`
-    INSERT INTO "reference_counters" ("key", "value") VALUES (${key}, 1)
-    ON CONFLICT ("key") DO UPDATE SET "value" = "reference_counters"."value" + 1
-    RETURNING "value"`;
-  return `${key}-${String(rows[0].value).padStart(6, '0')}`;
+  const res = (await db.$runCommandRaw({ findAndModify: 'reference_counters', query: { _id: key }, update: { $inc: { value: 1 } }, upsert: true, new: true })) as { value?: { value?: unknown } };
+  const raw = res.value?.value;
+  const value = Number(typeof raw === 'object' && raw !== null ? Object.values(raw)[0] : raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Reference counter ${key} returned an invalid value`);
+  return `${key}-${String(value).padStart(6, '0')}`;
 }
 
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';

@@ -9,7 +9,7 @@ import {
 } from '@estate/shared';
 import type { z } from 'zod';
 import type { activityCreateSchema, followUpCompleteSchema, followUpCreateSchema, leadCreateSchema, leadImportSchema, leadUpdateSchema } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, LeadPriority } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
@@ -19,6 +19,7 @@ import { paginated, Pagination, skipTake } from '../../common/http';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AssignmentService } from './assignment.service';
 import { assertLeadAccess, canEditLead, isAssignable, leadListSelect, leadScope, OPEN_LEAD_WHERE, resolveOrg } from './crm-access';
+import { segmentedPage, type Segment } from '../../common/ordering';
 
 export interface LeadListQuery extends Pagination {
   status?: LeadStatus;
@@ -97,19 +98,19 @@ export class LeadsService {
   async list(user: AuthUser, q: LeadListQuery) {
     const where = this.buildWhere(user, q);
     const countsWhere = this.buildWhere(user, { ...q, status: undefined });
-    const orderBy: Prisma.LeadOrderByWithRelationInput[] =
-      q.sort === 'oldest'
-        ? [{ createdAt: 'asc' }]
-        : q.sort === 'followup'
-          ? [{ nextFollowUpAt: { sort: 'asc', nulls: 'last' } }]
-          : q.sort === 'priority'
-            ? [{ priority: 'desc' }, { createdAt: 'desc' }]
-            : q.sort === 'updated'
-              ? [{ updatedAt: 'desc' }]
-              : [{ createdAt: 'desc' }];
-    const [rows, total, counts] = await Promise.all([
-      this.prisma.lead.findMany({ where, select: leadListSelect, orderBy: [...orderBy, { id: 'asc' }], ...skipTake(q) }),
-      this.prisma.lead.count({ where }),
+    type LeadSegment = Segment<Prisma.LeadWhereInput, Prisma.LeadOrderByWithRelationInput[]>;
+    const segments: LeadSegment[] =
+      q.sort === 'followup'
+        ? [
+            // Soonest follow-up first; leads without one last.
+            { where: { AND: [where, { nextFollowUpAt: { not: null } }] }, orderBy: [{ nextFollowUpAt: 'asc' }, { id: 'asc' }] },
+            { where: { AND: [where, { nextFollowUpAt: null }] }, orderBy: [{ id: 'asc' }] },
+          ]
+        : q.sort === 'priority'
+          ? [...Object.values(LeadPriority)].reverse().map((priority): LeadSegment => ({ where: { AND: [where, { priority }] }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] }))
+          : [{ where, orderBy: [q.sort === 'oldest' ? { createdAt: 'asc' } : q.sort === 'updated' ? { updatedAt: 'desc' } : { createdAt: 'desc' }, { id: 'asc' }] }];
+    const [{ rows, total }, counts] = await Promise.all([
+      segmentedPage(segments, { count: (w) => this.prisma.lead.count({ where: w }), find: (a) => this.prisma.lead.findMany({ ...a, select: leadListSelect }) }, skipTake(q)),
       this.prisma.lead.groupBy({ by: ['status'], where: countsWhere, _count: { _all: true } }),
     ]);
     return { ...paginated(rows, total, q), statusCounts: Object.fromEntries(counts.map((c) => [c.status, c._count._all])) };
@@ -239,7 +240,7 @@ export class LeadsService {
   }
 
   async upsertCustomer(tx: Tx, organizationId: string, c: { name: string; phone: string; email: string | null; userId?: string | null; city?: string | null }) {
-    const existing = await tx.customer.findUnique({ where: { organizationId_phone: { organizationId, phone: c.phone } } });
+    const existing = await tx.customer.findFirst({ where: { organizationId, phone: c.phone } });
     if (existing) {
       const patch: Prisma.CustomerUpdateInput = {};
       if (!existing.email && c.email) patch.email = c.email;

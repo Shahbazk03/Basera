@@ -1,33 +1,55 @@
 # Database
 
-PostgreSQL 17 with the **PostGIS** and **pg_trgm** extensions. Schema source: `backend/prisma/schema.prisma` (≈90 tables). Migrations: `backend/prisma/migrations` (never edit production tables by hand).
+**MongoDB** (Atlas in production; a single-node replica set locally — Prisma needs a replica set for
+transactions). Schema source: `backend/prisma/schema.prisma` (≈100 collections), Prisma **6.19** (Prisma 7
+does not support MongoDB yet). There are no migrations: `prisma db push` creates collections and the
+schema's indexes, and `backend/src/prisma/database-rules.ts` adds what the schema cannot declare.
 
 ## Conventions
 
 | Topic | Rule |
 | --- | --- |
-| Keys | UUID v7 (`@default(uuid(7))`) — time-ordered for index locality |
-| Naming | snake_case plural tables (`@@map`), camelCase columns (quote them in raw SQL: `"createdAt"`) |
-| Money | `numeric(14,2)` INR; calculations in integer paise (`@estate/shared/money`) |
-| Areas | `numeric`, plus `areaSqft` normalised for search/sort |
-| Time | `timestamptz(3)` for instants; `date` for calendar days (attendance, leave, payroll periods) |
+| Keys | UUID v7 strings in `_id` (`@default(uuid(7)) @map("_id")`) — time-ordered, the format the API validates |
+| Naming | snake_case plural collections (`@@map`), camelCase fields |
+| Money | `Float` rupees; every calculation in integer paise (`@estate/shared/money`) — never add stored floats directly |
+| Areas | `Float`, plus `areaSqft` normalised for search/sort |
+| Time | `DateTime` instants; calendar days (attendance, leave, payroll periods, invoice dates…) are stored at UTC midnight |
 | Deletion | Soft delete (`deletedAt`) for users, organisations, listings, projects, leads, customers, employees |
 | Tenancy | `organizationId` on every business record |
-| Integrity | Foreign keys everywhere; CHECK constraints for prices, areas, coordinates, booking windows, amounts paid ≤ amount, payroll month |
-| Concurrency | `version` columns + conditional updates for unit inventory; status-guarded updates for lifecycles |
-| Search | GIN trigram indexes on listing titles, project names, cities and localities; composite B-tree indexes for filters; GiST index on `geography` columns |
+| Integrity | References checked on every write; collection validators for prices, areas, coordinates, booking windows, amounts paid ≤ amount, payroll month |
+| Concurrency | `version` fields + conditional updates for unit inventory; status-guarded updates for lifecycles; lock documents + automatic retries for transactions on the same record |
+| Search | Composite indexes for filters; 2dsphere index on `location`; typo-tolerant locality suggestions (trigram similarity in the API) |
 | Audit | `audit_logs` (actor, action, entity, before/after JSON with secrets redacted) |
 
-### Custom SQL in migrations
-- `estate_sync_location()` trigger keeps `properties.location` and `projects.location` (`geography(Point,4326)`) in sync with latitude/longitude.
-- CHECK constraints listed above. `prisma migrate dev` was verified to produce an empty diff with these in place.
+## What the MongoDB layer guarantees
+
+PostgreSQL gave these for free; `backend/src/prisma` provides them (tested in `backend/test/mongo.int-spec.ts`):
+
+| Guarantee | How |
+| --- | --- |
+| `field: null` filters match "not set" | Every create writes all optional fields, `null` when absent (Prisma would leave them out, and MongoDB's `null` filter would then miss them) |
+| References exist | Each foreign key written by a create/update is checked inside the caller's transaction → `P2003` (HTTP 409) when missing |
+| Literal text search | Prisma turns `contains`/`startsWith`/`endsWith` (and case-insensitive `equals`/`in`) into regular expressions without escaping; the guard escapes filter text, so `+91…` and `(x)` mean themselves and patterns cannot be injected |
+| Calendar dates | Former `DATE` fields are truncated to UTC midnight on write |
+| `location` follows latitude/longitude | GeoJSON point set on create/update of properties and projects |
+| CHECK constraints | Collection validators (`database-rules.ts`); a violation is HTTP 400 `INTEGRITY_CHECK` |
+| Unique when set | Partial unique indexes: `users.email`, `users.phone`, `customers(organizationId, phone)` |
+| Sequences | `reference_counters` via one atomic `findAndModify` (also inside transactions) |
+| Row locks / advisory locks | `lockInTransaction(tx, key)` writes a lock document; MongoDB aborts the later of two conflicting transactions and `DbClient.$transaction` retries it (up to 8 attempts) |
+| Single-instance jobs | `PrismaService.withJobLock` — an expiring lease in `job_locks` |
+| Enum order, nulls last | MongoDB sorts enums alphabetically and nulls first; `common/ordering.ts` restores declaration order / nulls last where screens rely on it |
+
+Rules for new code: create clients with `DbClient` (never `new PrismaClient()`), keep transaction callbacks
+free of side effects (they may be retried), and add new optional unique fields to
+`PARTIAL_UNIQUE_INDEXES`, new calendar-date fields to `DATE_ONLY`.
 
 ### Workflow
 ```bash
 # change schema.prisma, then:
-npm run db:migrate -- --name describe_change   # creates + applies a migration in development
-npm run db:deploy                               # applies pending migrations (CI / staging / production)
+npm run db:deploy      # prisma db push: collections + indexes (stops instead of losing data)
+npm run db:seed        # reference data (+ demo data outside production); also installs indexes/validators
 ```
+Drop and rebuild a local database: stop the API, `mongosh "mongodb://localhost:27018/basera?directConnection=true" --eval "db.dropDatabase()"`, then the two commands above.
 
 ## Entity-relationship overview
 

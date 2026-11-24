@@ -1,12 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { z } from 'zod';
 import type { taskSchema, taskUpdateSchema } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { paginated, Pagination, skipTake } from '../../common/http';
 import { canHr, platformOrg } from './hr.util';
+import { segmentedPage, type Segment } from '../../common/ordering';
 
 export interface TaskListQuery extends Pagination {
   scope: 'mine' | 'all';
@@ -37,9 +38,13 @@ export class TasksService {
     else if (q.scope === 'mine') where = { ...where, status: { in: ['TODO', 'IN_PROGRESS', 'DONE'] } };
     if (q.assignedToId) where = { ...where, assignedToId: q.assignedToId };
     if (q.q) where = { ...where, title: { contains: q.q, mode: 'insensitive' } };
-    const [rows, total, counts] = await Promise.all([
-      this.prisma.employeeTask.findMany({ where, include: taskInclude, orderBy: [{ status: 'asc' }, { dueAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }], ...skipTake(q) }),
-      this.prisma.employeeTask.count({ where }),
+    type TaskSegment = Segment<Prisma.EmployeeTaskWhereInput, Prisma.EmployeeTaskOrderByWithRelationInput[]>;
+    const segments = Object.values(TaskStatus).flatMap((status): TaskSegment[] => [
+      { where: { AND: [where, { status }, { dueAt: { not: null } }] }, orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }, { id: 'asc' }] },
+      { where: { AND: [where, { status }, { dueAt: null }] }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] },
+    ]);
+    const [{ rows, total }, counts] = await Promise.all([
+      segmentedPage(segments, { count: (w) => this.prisma.employeeTask.count({ where: w }), find: (a) => this.prisma.employeeTask.findMany({ ...a, include: taskInclude }) }, skipTake(q)),
       this.prisma.employeeTask.groupBy({ by: ['status'], where: { ...where, status: undefined }, _count: { _all: true } }),
     ]);
     const now = Date.now();

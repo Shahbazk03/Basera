@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { normalizePhone } from '@estate/shared';
 import type { z } from 'zod';
 import type { memberInviteSchema, organizationUpdateSchema, orgDocumentSchema } from '@estate/shared';
-import { AccountType, OrganizationType, Prisma } from '../../generated/prisma/client';
+import { AccountType, OrganizationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';

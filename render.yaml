@@ -1,11 +1,11 @@
 # Render Blueprint — Basera backend (API + background jobs) and its Redis-compatible queue store.
 # Render dashboard → New → Blueprint → choose this repository. Values marked `sync: false` are asked for
-# during setup and are never stored in this file. Step-by-step guide: docs/deployment/render-vercel-supabase.md
+# during setup and are never stored in this file. Step-by-step guide: docs/deployment/render-vercel-atlas-s3.md
 services:
   - type: web
     name: basera-api
     runtime: docker
-    region: singapore            # same region as the Supabase project
+    region: singapore            # same region as the MongoDB Atlas cluster and the S3 buckets
     plan: starter                # "free" works for trying it out, but sleeps when idle (scheduled jobs pause)
     dockerfilePath: ./infrastructure/docker/api.render.Dockerfile
     dockerContext: .
@@ -16,7 +16,8 @@ services:
         value: production
       - key: NODE_ENV
         value: production
-      # Supabase → Connect → Session pooler URI (port 5432) with your password, ending in ?sslmode=require
+      # MongoDB Atlas → Connect → Drivers: the mongodb+srv:// string with your database user's password
+      # and the database name added before the "?", e.g. …mongodb.net/basera?retryWrites=true&w=majority
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL
@@ -50,19 +51,18 @@ services:
         sync: false
       - key: TLS_PROVIDER
         value: none
-      # Photos and documents: Supabase Storage (S3-compatible) — see the guide
+      # Photos and documents: Amazon S3 (two buckets: public media, private documents) — see the guide
       - key: STORAGE_DRIVER
         value: s3
       - key: S3_FORCE_PATH_STYLE
-        value: "true"
-      - key: S3_ENDPOINT
-        sync: false
+        value: "false"
       - key: S3_REGION
-        sync: false
+        value: ap-southeast-1      # Asia Pacific (Singapore); change if your buckets are elsewhere
       - key: S3_BUCKET_PUBLIC
         sync: false
       - key: S3_BUCKET_PRIVATE
         sync: false
+      # https://<public-bucket>.s3.ap-southeast-1.amazonaws.com
       - key: S3_PUBLIC_BASE_URL
         sync: false
       - key: S3_ACCESS_KEY_ID
@@ -80,6 +80,6 @@ services:
   - type: keyvalue
     name: basera-redis
     region: singapore
-    plan: free                   # job queue only; queued messages are also kept in PostgreSQL, so nothing is lost on restart
+    plan: free                   # job queue only; queued messages are also kept in MongoDB, so nothing is lost on restart
     maxmemoryPolicy: noeviction  # never silently drop queued jobs
     ipAllowList: []              # reachable only from your Render services

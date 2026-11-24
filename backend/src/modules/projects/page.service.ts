@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { defaultProjectPage, pageSectionsSchema, type PageSection } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';

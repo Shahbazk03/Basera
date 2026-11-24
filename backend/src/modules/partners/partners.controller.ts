@@ -207,7 +207,7 @@ export class OrganizationController {
   }
 }
 
-/** Hourly: lapse expired subscriptions (single instance via advisory lock). */
+/** Hourly: lapse expired subscriptions (single instance via a job lease). */
 @Injectable()
 export class PartnersScheduler {
   private readonly logger = new Logger('PartnersScheduler');
@@ -220,7 +220,7 @@ export class PartnersScheduler {
   @Cron(CronExpression.EVERY_HOUR)
   async run(): Promise<void> {
     if (env().APP_ENV === 'test') return;
-    const expired = await this.prisma.withAdvisoryLock('jobs:subscription-expiry', (tx) => this.partners.expireSubscriptions(tx));
+    const expired = await this.prisma.withJobLock('jobs:subscription-expiry', (tx) => this.partners.expireSubscriptions(tx));
     if (expired) this.logger.log(`Expired ${expired} subscription(s)`);
   }
 }

@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Resolver } from 'node:dns/promises';
 import tls from 'node:tls';
 import { HostnameError, normalizeHostname, normalizeRequestHost, validateSubdomainLabel, verificationRecordName } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';

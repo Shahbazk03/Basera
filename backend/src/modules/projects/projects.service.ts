@@ -19,7 +19,7 @@ import type {
   projectNearbySchema,
   projectTeamMemberSchema,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, MediaType } from '@prisma/client';
 import { Db, PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
@@ -29,6 +29,7 @@ import { uniqueSlug } from '../../common/references';
 import { NotificationsService } from '../notifications/notifications.service';
 import { FilesService } from '../files/files.service';
 import { unitStatsFor, type UnitStats } from './project-card';
+import { sortByEnum } from '../../common/ordering';
 
 type ProjectInput = z.output<typeof projectBaseSchema>;
 
@@ -223,7 +224,7 @@ export class ProjectsService {
         organization: { select: { id: true, name: true, type: true, status: true, projectPublishMode: true } },
         developerOrg: { select: { id: true, name: true, slug: true } },
         createdBy: { select: { id: true, fullName: true } },
-        media: { orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }] },
+        media: { orderBy: [{ sortOrder: 'asc' }] }, // grouped by type below
         documents: { orderBy: { sortOrder: 'asc' }, include: { file: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true } } } },
         amenities: { select: { amenityId: true } },
         nearbyPlaces: { orderBy: { sortOrder: 'asc' } },
@@ -246,6 +247,7 @@ export class ProjectsService {
       : [];
     return {
       ...p,
+      media: sortByEnum(p.media, (m) => m.type, MediaType),
       amenityIds: p.amenities.map((a) => a.amenityId),
       computedStatus,
       inventory: { ...stats, byStatus: Object.fromEntries(byStatus.map((b) => [b.status, b._count._all])) },
@@ -380,8 +382,8 @@ export class ProjectsService {
       localityId: existing.localityId,
       bookingOpensAt: existing.bookingOpensAt?.toISOString() ?? null,
       bookingClosesAt: existing.bookingClosesAt?.toISOString() ?? null,
-      priceMinOverride: existing.priceMinOverride?.toNumber() ?? null,
-      priceMaxOverride: existing.priceMaxOverride?.toNumber() ?? null,
+      priceMinOverride: existing.priceMinOverride ?? null,
+      priceMaxOverride: existing.priceMaxOverride ?? null,
       ...input,
     };
     await this.validateRefs(user, { ...input, cityId: merged.cityId, localityId: merged.localityId, bookingOpensAt: merged.bookingOpensAt, bookingClosesAt: merged.bookingClosesAt, priceMinOverride: merged.priceMinOverride, priceMaxOverride: merged.priceMaxOverride });
@@ -584,7 +586,7 @@ export class ProjectsService {
       }
       await this.audit.log({ actorId: user.id, action: 'project.media.update', entityType: 'Project', entityId: id, organizationId: p.organizationId, metadata: { count: rows.length } }, tx);
     });
-    return this.prisma.projectMedia.findMany({ where: { projectId: id }, orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }] });
+    return sortByEnum(await this.prisma.projectMedia.findMany({ where: { projectId: id }, orderBy: [{ sortOrder: 'asc' }] }), (m) => m.type, MediaType);
   }
 
   async addDocument(user: AuthUser, id: string, input: z.output<typeof projectDocumentSchema>) {

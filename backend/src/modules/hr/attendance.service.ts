@@ -14,12 +14,13 @@ import {
   type holidaySchema,
   type shiftSchema,
 } from '@estate/shared';
-import { AttendanceStatus, Prisma } from '../../generated/prisma/client';
+import { AttendanceStatus, Prisma, ApprovalStatus } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { paginated, Pagination, skipTake } from '../../common/http';
 import { assertHr, canHr, dateStr, defaultShift, monthBounds, platformOrg, requireEmployee, toDate, todayIst, workCalendar } from './hr.util';
+import { segmentedPage, type Segment } from '../../common/ordering';
 
 type ShiftRow = { id: string; name: string; startTime: string; endTime: string; graceMinutes: number; fullDayMinutes: number; halfDayMinutes: number; weeklyOffDays: number[]; timezone: string };
 
@@ -328,15 +329,18 @@ export class AttendanceService {
     else if (user.employeeId) where = { employee: { managerId: user.employeeId } };
     else throw new ForbiddenException();
     if (q.status) where = { ...where, status: q.status };
-    const [rows, total] = await Promise.all([
-      this.prisma.attendanceCorrection.findMany({
-        where,
-        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-        include: { employee: { select: { id: true, employeeCode: true, user: { select: { fullName: true } } } }, attendance: true, reviewedBy: { select: { fullName: true } } },
-        ...skipTake(q),
-      }),
-      this.prisma.attendanceCorrection.count({ where }),
-    ]);
+    const segments = Object.values(ApprovalStatus).map((status): Segment<Prisma.AttendanceCorrectionWhereInput, Prisma.AttendanceCorrectionOrderByWithRelationInput[]> => ({
+      where: { AND: [where, { status }] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+    }));
+    const { rows, total } = await segmentedPage(
+      segments,
+      {
+        count: (w) => this.prisma.attendanceCorrection.count({ where: w }),
+        find: (a) => this.prisma.attendanceCorrection.findMany({ ...a, include: { employee: { select: { id: true, employeeCode: true, user: { select: { fullName: true } } } }, attendance: true, reviewedBy: { select: { fullName: true } } } }),
+      },
+      skipTake(q),
+    );
     return paginated(
       rows.map((r) => ({ ...r, date: dateStr(r.date), attendance: r.attendance ? this.recordOut(r.attendance) : null })),
       total,

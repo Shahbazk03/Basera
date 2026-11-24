@@ -1,13 +1,14 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { BOOKABLE_PROJECT_STATUSES, canTransitionUnit, toSqft, type UnitStatus } from '@estate/shared';
+import { BOOKABLE_PROJECT_STATUSES, canTransitionUnit, toPaise, toSqft, type UnitStatus } from '@estate/shared';
 import type { z } from 'zod';
 import type { projectBlockSchema, projectUnitSchema, projectUnitUpdateSchema, unitBulkCreateSchema } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { paginated, Pagination, skipTake } from '../../common/http';
 import { ProjectsService } from './projects.service';
+import { segmentedPage, type Segment } from '../../common/ordering';
 
 export interface UnitListQuery extends Pagination {
   status?: UnitStatus;
@@ -95,30 +96,41 @@ export class InventoryService {
       ...(q.unitType ? { unitType: q.unitType as never } : {}),
       ...(q.q ? { OR: [{ code: { contains: q.q.toUpperCase() } }, { configuration: { contains: q.q, mode: 'insensitive' } }] } : {}),
     };
-    const [rows, total, counts] = await Promise.all([
-      this.prisma.projectUnit.findMany({
-        where,
-        include: {
-          block: { select: { id: true, name: true, sortOrder: true } },
-          reservations: { where: { status: 'ACTIVE' }, select: { id: true, expiresAt: true, notes: true, lead: { select: { id: true, leadNo: true, name: true } }, reservedBy: { select: { fullName: true } } } },
+    // Units by block order, units without a block last (MongoDB would sort them first).
+    type UnitSegment = Segment<Prisma.ProjectUnitWhereInput, Prisma.ProjectUnitOrderByWithRelationInput[]>;
+    const segments: UnitSegment[] = [
+      { where: { AND: [where, { blockId: { not: null } }] }, orderBy: [{ block: { sortOrder: 'asc' } }, { code: 'asc' }] },
+      { where: { AND: [where, { blockId: null }] }, orderBy: [{ code: 'asc' }] },
+    ];
+    const [{ rows, total }, counts] = await Promise.all([
+      segmentedPage(
+        segments,
+        {
+          count: (w) => this.prisma.projectUnit.count({ where: w }),
+          find: (a) =>
+            this.prisma.projectUnit.findMany({
+              ...a,
+              include: {
+                block: { select: { id: true, name: true, sortOrder: true } },
+                reservations: { where: { status: 'ACTIVE' }, select: { id: true, expiresAt: true, notes: true, lead: { select: { id: true, leadNo: true, name: true } }, reservedBy: { select: { fullName: true } } } },
+              },
+            }),
         },
-        orderBy: [{ block: { sortOrder: 'asc' } }, { code: 'asc' }],
-        ...skipTake(q),
-      }),
-      this.prisma.projectUnit.count({ where }),
+        skipTake(q),
+      ),
       this.prisma.projectUnit.groupBy({ by: ['status'], where: { ...where, status: undefined }, _count: { _all: true } }),
     ]);
     rows.sort((a, b) => (a.block?.sortOrder ?? 999) - (b.block?.sortOrder ?? 999) || collator.compare(a.code, b.code));
     return { ...paginated(rows, total, q), statusCounts: Object.fromEntries(counts.map((c) => [c.status, c._count._all])) };
   }
 
-  private unitData(input: Partial<z.output<typeof projectUnitSchema>>, current?: { area: Prisma.Decimal; areaUnit: string; basePrice: Prisma.Decimal; additionalCharges: Prisma.Decimal }) {
+  private unitData(input: Partial<z.output<typeof projectUnitSchema>>, current?: { area: number; areaUnit: string; basePrice: number; additionalCharges: number }) {
     const out: Record<string, unknown> = { ...input };
-    const area = input.area ?? (current ? current.area.toNumber() : undefined);
+    const area = input.area ?? current?.area;
     const unit = (input.areaUnit ?? current?.areaUnit) as z.output<typeof projectUnitSchema>['areaUnit'] | undefined;
     if (area !== undefined && unit) out.areaSqft = toSqft(area, unit);
-    const base = input.basePrice ?? current?.basePrice.toNumber();
-    const extra = input.additionalCharges ?? current?.additionalCharges.toNumber() ?? 0;
+    const base = input.basePrice ?? current?.basePrice;
+    const extra = input.additionalCharges ?? current?.additionalCharges ?? 0;
     if (base !== undefined) out.totalPrice = Math.round((base + extra) * 100) / 100;
     return out;
   }
@@ -205,7 +217,7 @@ export class InventoryService {
       const res = await tx.projectUnit.updateMany({ where: { id: unitId, version: expectedVersion ?? unit.version }, data: { ...(data as Prisma.ProjectUnitUncheckedUpdateManyInput), version: { increment: 1 } } });
       if (!res.count) throw new ConflictException({ message: 'This unit was changed by someone else. Refresh and try again.', code: 'CONCURRENT_UPDATE' });
       const updated = await tx.projectUnit.findUniqueOrThrow({ where: { id: unitId } });
-      if (priceChange && !updated.totalPrice.equals(unit.totalPrice)) {
+      if (priceChange && toPaise(updated.totalPrice) !== toPaise(unit.totalPrice)) {
         await tx.unitStatusHistory.create({ data: { unitId, fromStatus: unit.status, toStatus: unit.status, changedById: user.id, reason: 'Price updated', priceBefore: unit.totalPrice, priceAfter: updated.totalPrice } });
       }
       await this.audit.log({ actorId: user.id, action: 'project.unit.update', entityType: 'ProjectUnit', entityId: unitId, organizationId: unit.project.organizationId, before: { code: unit.code, totalPrice: unit.totalPrice }, after: changes }, tx);

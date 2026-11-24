@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { Db, PrismaService } from '../prisma/prisma.service';
 import { toPlain } from './http-infra';
 

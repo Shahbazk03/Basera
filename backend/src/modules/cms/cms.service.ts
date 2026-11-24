@@ -2,12 +2,13 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { HOME_SECTION_TYPES, isReservedPageSlug } from '@estate/shared';
 import type { z } from 'zod';
 import type { bannerSchema, cmsPageSchema, faqSchema, homeSectionSchema, homeSectionUpdateSchema, seoOverrideSchema } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { SettingsService } from '../../common/settings.service';
 import { publicProjectWhere } from '../projects/project-card';
+import { nullsLast } from '../../common/ordering';
 
 const pageSelect = {
   id: true,
@@ -39,11 +40,12 @@ export class CmsService {
   // ───────────────────────── Pages ─────────────────────────
 
   async pages(q: { q?: string; status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED' }) {
-    return this.prisma.cmsPage.findMany({
+    const rows = await this.prisma.cmsPage.findMany({
       where: { ...(q.status ? { status: q.status } : {}), ...(q.q ? { OR: [{ title: { contains: q.q, mode: 'insensitive' } }, { slug: { contains: q.q.toLowerCase() } }] } : {}) },
       orderBy: [{ footerGroup: 'asc' }, { title: 'asc' }],
       select: pageSelect,
     });
+    return nullsLast(rows, (p) => p.footerGroup); // pages without a footer group last
   }
 
   async page(id: string) {
@@ -266,7 +268,10 @@ export class CmsService {
   }
 
   async footerLinks() {
-    const rows = await this.prisma.cmsPage.findMany({ where: { status: 'PUBLISHED', showInFooter: true }, orderBy: [{ footerGroup: 'asc' }, { title: 'asc' }], select: { slug: true, title: true, footerGroup: true } });
+    const rows = nullsLast(
+      await this.prisma.cmsPage.findMany({ where: { status: 'PUBLISHED', showInFooter: true }, orderBy: [{ footerGroup: 'asc' }, { title: 'asc' }], select: { slug: true, title: true, footerGroup: true } }),
+      (p) => p.footerGroup, // ungrouped links form the last footer column
+    );
     const groups = new Map<string, { slug: string; title: string }[]>();
     for (const r of rows) groups.set(r.footerGroup ?? 'Company', [...(groups.get(r.footerGroup ?? 'Company') ?? []), { slug: r.slug, title: r.title }]);
     return [...groups.entries()].map(([group, links]) => ({ group, links }));

@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, HttpExcepti
 import { PERMISSION_KEYS, type PermissionKey } from '@estate/shared';
 import type { z } from 'zod';
 import type { adminSetPasswordSchema, adminUserUpdateSchema, roleSchema, roleUpdateSchema, userRoleGrantSchema, userStatusChangeSchema } from '@estate/shared';
-import { AccountType, Prisma, UserStatus } from '../../generated/prisma/client';
+import { AccountType, Prisma, UserStatus, RoleScope } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';
@@ -11,6 +11,7 @@ import { paginated, Pagination, skipTake } from '../../common/http';
 import { hashPassword } from '../../common/crypto';
 import type { RequestMeta } from '../../common/decorators';
 import { AuthService } from '../auth/auth.service';
+import { enumRank } from '../../common/ordering';
 
 const PRIVILEGED_ROLES = new Set(['SUPER_ADMIN', 'ADMIN']);
 
@@ -281,10 +282,13 @@ export class AdminService {
   }
 
   async roles() {
-    const rows = await this.prisma.role.findMany({
-      orderBy: [{ isSystem: 'desc' }, { scope: 'asc' }, { name: 'asc' }],
+    const fetched = await this.prisma.role.findMany({
+      orderBy: [{ name: 'asc' }],
       include: { permissions: { select: { permission: { select: { key: true } } } }, _count: { select: { userRoles: true } } },
     });
+    // System roles first, platform scope before organisation scope, then name.
+    const scopeRank = enumRank(RoleScope);
+    const rows = [...fetched].sort((a, b) => Number(b.isSystem) - Number(a.isSystem) || scopeRank(a.scope) - scopeRank(b.scope));
     return rows.map(({ permissions, _count, ...r }) => ({ ...r, permissions: permissions.map((p) => p.permission.key), users: _count.userRoles }));
   }
 

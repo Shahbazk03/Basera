@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import {
   enumLabel,
+  fromPaise,
   OPEN_LEAD_STATUSES,
   SALES_PROJECT_STATUSES,
   type DashboardBreakdown,
@@ -10,8 +11,9 @@ import {
   type DashboardSection,
   type PermissionKey,
   type WorkspaceKey,
+  toPaise,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 
@@ -580,11 +582,15 @@ export class ReportsService {
     const [units, deals, payments, enquiries] = await Promise.all([
       this.prisma.projectUnit.groupBy({ by: ['projectId', 'status'], where: { projectId: { in: ids } }, _count: { _all: true } }),
       this.prisma.deal.groupBy({ by: ['projectId'], where: { projectId: { in: ids }, status: { in: ['BOOKED', 'AGREEMENT_SIGNED', 'CLOSED_WON'] } }, _count: { _all: true }, _sum: { dealValue: true } }),
-      this.prisma.$queryRaw<{ projectId: string; total: Prisma.Decimal }[]>`
-        SELECT d."projectId", sum(dp.amount) AS total FROM deal_payments dp JOIN deals d ON d.id = dp."dealId"
-        WHERE d."projectId" = ANY(${ids}::uuid[]) AND d.status <> 'CANCELLED' GROUP BY d."projectId"`,
+      this.prisma.dealPayment.findMany({ where: { deal: { projectId: { in: ids }, status: { not: 'CANCELLED' } } }, select: { amount: true, deal: { select: { projectId: true } } } }),
       this.prisma.enquiry.groupBy({ by: ['projectId'], where: { projectId: { in: ids }, status: { not: 'SPAM' } }, _count: { _all: true } }),
     ]);
+    // Customer money per project, summed in paise (amounts are stored as rupees).
+    const receivedPaise = new Map<string, number>();
+    for (const pay of payments) {
+      const pid = pay.deal.projectId;
+      if (pid) receivedPaise.set(pid, (receivedPaise.get(pid) ?? 0) + toPaise(pay.amount));
+    }
     return {
       rows: projects.map((p) => {
         const u = (s: string) => units.find((x) => x.projectId === p.id && x.status === s)?._count._all ?? 0;
@@ -602,7 +608,7 @@ export class ReportsService {
           sold: u('SOLD'),
           bookings: d?._count._all ?? 0,
           bookingValue: Number(d?._sum.dealValue ?? 0),
-          customerMoneyReceived: Number(payments.find((x) => x.projectId === p.id)?.total ?? 0),
+          customerMoneyReceived: fromPaise(receivedPaise.get(p.id) ?? 0),
           enquiries: enquiries.find((x) => x.projectId === p.id)?._count._all ?? 0,
         };
       }),

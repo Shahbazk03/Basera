@@ -39,7 +39,7 @@ export class SystemController {
     const checks: Record<string, { ok: boolean; latencyMs?: number; error?: string; configured?: boolean }> = {};
     const t0 = Date.now();
     try {
-      await this.prisma.$queryRaw`SELECT 1`;
+      await this.prisma.$runCommandRaw({ ping: 1 });
       checks.database = { ok: true, latencyMs: Date.now() - t0 };
     } catch (e) {
       checks.database = { ok: false, error: (e as Error).message };

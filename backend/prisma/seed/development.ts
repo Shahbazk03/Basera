@@ -6,7 +6,8 @@
  */
 import { hash } from '@node-rs/argon2';
 import { defaultProjectPage, slugify, toSqft } from '@estate/shared';
-import type { Prisma, PrismaClient } from '../../src/generated/prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
+import { nextReference } from '../../src/common/references';
 
 type Ref = { platformOrgId: string; lucknowId: string; upStateId: string };
 
@@ -77,12 +78,8 @@ function demoCode(prefix: string): string {
   return `${prefix}-${s}`;
 }
 
-async function nextRef(prisma: PrismaClient, prefix: string, at: Date = now): Promise<string> {
-  const key = `${prefix}-${at.getUTCFullYear()}`;
-  const rows = await prisma.$queryRaw<{ value: number }[]>`
-    INSERT INTO "reference_counters" ("key", "value") VALUES (${key}, 1)
-    ON CONFLICT ("key") DO UPDATE SET "value" = "reference_counters"."value" + 1 RETURNING "value"`;
-  return `${key}-${String(rows[0].value).padStart(6, '0')}`;
+function nextRef(prisma: PrismaClient, prefix: string, at: Date = now): Promise<string> {
+  return nextReference(prisma, prefix, at);
 }
 
 export async function seedDevelopment(prisma: PrismaClient, ref: Ref): Promise<void> {
@@ -91,7 +88,7 @@ export async function seedDevelopment(prisma: PrismaClient, ref: Ref): Promise<v
   if (!password || password.startsWith('replace-with') || password.length < 10) {
     throw new Error('Set SEED_DEFAULT_PASSWORD (min 10 chars) in .env before seeding development data');
   }
-  if (await prisma.user.findUnique({ where: { email: 'superadmin@example.com' } })) {
+  if (await prisma.user.findFirst({ where: { email: 'superadmin@example.com' } })) {
     console.log('  • Development data already present — skipping (run `npm run db:reset` for a fresh database)');
     return;
   }
@@ -935,11 +932,9 @@ export async function seedDevelopment(prisma: PrismaClient, ref: Ref): Promise<v
     const created = daysAgo(s.ago, 10 + (s.ago % 6));
     const propertyId = s.propertyKey ? propertyIds[s.propertyKey] : null;
     const property = propertyId ? await prisma.property.findUnique({ where: { id: propertyId }, select: { localityId: true, listingType: true, title: true } }) : null;
-    const customer = await prisma.customer.upsert({
-      where: { organizationId_phone: { organizationId: s.org, phone: s.phone } },
-      create: { organizationId: s.org, fullName: s.name, phone: s.phone, email: s.email ?? null, city: 'Lucknow', isDemo: true, createdAt: created },
-      update: {},
-    });
+    const customer =
+      (await prisma.customer.findFirst({ where: { organizationId: s.org, phone: s.phone } })) ??
+      (await prisma.customer.create({ data: { organizationId: s.org, fullName: s.name, phone: s.phone, email: s.email ?? null, city: 'Lucknow', isDemo: true, createdAt: created } }));
     const leadNo = await nextRef(prisma, 'LD');
     const lead = await prisma.lead.create({
       data: {

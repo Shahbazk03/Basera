@@ -1,5 +1,5 @@
 import type { PropertyCard, PropertyDetail } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { iso, isoDate, num } from '../../common/http';
 
 export const propertyCardSelect = {
@@ -94,7 +94,7 @@ export type PropertyDetailRow = Prisma.PropertyGetPayload<{ include: typeof prop
 
 export function toPropertyDetail(p: PropertyDetailRow, ctx: { activeListings: number; whatsappAvailable: boolean; includePrivateDocs: boolean }): PropertyDetail {
   const approximate = p.hideExactLocation;
-  const coord = (v: Prisma.Decimal | null) => {
+  const coord = (v: number | null) => {
     const n = num(v);
     return n === null ? null : approximate ? Math.round(n * 100) / 100 : n;
   };

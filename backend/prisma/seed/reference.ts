@@ -4,7 +4,7 @@
  * lead sources, feature flags and starter CMS structure.
  */
 import { PERMISSIONS, PERMISSION_KEYS, resolveRolePermissions, slugify, SYSTEM_ROLES } from '@estate/shared';
-import type { PrismaClient } from '../../src/generated/prisma/client';
+import type { PrismaClient } from '@prisma/client';
 
 const INDIAN_STATES: [string, string][] = [
   ['Andhra Pradesh', 'AP'], ['Arunachal Pradesh', 'AR'], ['Assam', 'AS'], ['Bihar', 'BR'], ['Chhattisgarh', 'CG'],
@@ -172,7 +172,9 @@ export async function seedReference(prisma: PrismaClient): Promise<{ platformOrg
     });
     const wanted = resolveRolePermissions(def).map((k) => permissionIds.get(k)!).filter(Boolean);
     await prisma.rolePermission.deleteMany({ where: { roleId: role.id, permissionId: { notIn: wanted } } });
-    await prisma.rolePermission.createMany({ data: wanted.map((permissionId) => ({ roleId: role.id, permissionId })), skipDuplicates: true });
+    const have = new Set((await prisma.rolePermission.findMany({ where: { roleId: role.id }, select: { permissionId: true } })).map((p) => p.permissionId));
+    const missing = wanted.filter((permissionId) => !have.has(permissionId));
+    if (missing.length) await prisma.rolePermission.createMany({ data: missing.map((permissionId) => ({ roleId: role.id, permissionId })) });
   }
 
   // Geography

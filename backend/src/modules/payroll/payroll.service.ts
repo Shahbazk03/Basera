@@ -12,8 +12,8 @@ import {
   type salaryComponentSchema,
   type salaryStructureSchema,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma, SalaryComponentType } from '@prisma/client';
+import { lockInTransaction, PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { SettingsService } from '../../common/settings.service';
@@ -22,8 +22,9 @@ import { nextReference } from '../../common/references';
 import { env } from '../../config/env';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertHr, canHr, dateStr, defaultShift, monthBounds, periodLabel, platformOrg, toDate, todayIst } from '../hr/hr.util';
+import { sortByEnum } from '../../common/ordering';
 
-const n = (v: Prisma.Decimal | number | null | undefined) => Number(v ?? 0);
+const n = (v: number | null | undefined) => Number(v ?? 0);
 const FALLBACK_WEEKLY_OFF = [0];
 
 export interface AdjustmentListQuery extends Pagination {
@@ -63,7 +64,8 @@ export class PayrollService {
   async components(user: AuthUser) {
     const org = platformOrg(user);
     assertHr(user, 'payroll.view', 'payroll.manage');
-    return this.prisma.salaryComponent.findMany({ where: { organizationId: org }, orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }], include: { _count: { select: { structureLines: true } } } });
+    const rows = await this.prisma.salaryComponent.findMany({ where: { organizationId: org }, orderBy: [{ sortOrder: 'asc' }], include: { _count: { select: { structureLines: true } } } });
+    return sortByEnum(rows, (c) => c.type, SalaryComponentType); // earnings before deductions
   }
 
   async saveComponent(user: AuthUser, id: string | null, input: Partial<z.output<typeof salaryComponentSchema>>) {
@@ -90,7 +92,7 @@ export class PayrollService {
 
   // ───────────── Structures ─────────────
 
-  private toCalcComponents(lines: { value: Prisma.Decimal; component: { code: string; name: string; type: 'EARNING' | 'DEDUCTION'; calcType: 'FIXED' | 'PERCENT_OF_BASIC' | 'PERCENT_OF_GROSS'; maxAmount: Prisma.Decimal | null; prorateByAttendance: boolean; sortOrder: number; isActive: boolean } }[]): { components: PayrollComponentInput[]; skipped: string[] } {
+  private toCalcComponents(lines: { value: number; component: { code: string; name: string; type: 'EARNING' | 'DEDUCTION'; calcType: 'FIXED' | 'PERCENT_OF_BASIC' | 'PERCENT_OF_GROSS'; maxAmount: number | null; prorateByAttendance: boolean; sortOrder: number; isActive: boolean } }[]): { components: PayrollComponentInput[]; skipped: string[] } {
     const skipped: string[] = [];
     const components = lines
       .filter((l) => {
@@ -503,7 +505,7 @@ export class PayrollService {
 
     await this.prisma.$transaction(
       async (tx) => {
-        await tx.$queryRaw`SELECT id FROM payroll_runs WHERE id = ${id}::uuid FOR UPDATE`;
+        await lockInTransaction(tx, `payroll-run:${id}`);
         const fresh = await tx.payrollRun.findUniqueOrThrow({ where: { id } });
         if (!['DRAFT', 'CALCULATED'].includes(fresh.status)) throw new ConflictException('The run changed while calculating — refresh and try again');
         await tx.payslip.deleteMany({ where: { payrollRunId: id } });

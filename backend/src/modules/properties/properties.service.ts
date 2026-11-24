@@ -10,7 +10,7 @@ import {
 } from '@estate/shared';
 import type { z } from 'zod';
 import type { propertyReportSchema } from '@estate/shared';
-import { Prisma, PropertyStatus } from '../../generated/prisma/client';
+import { Prisma, PropertyStatus } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';

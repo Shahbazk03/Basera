@@ -10,7 +10,7 @@ import {
   type employeeUpdateSchema,
   type PermissionKey,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';
@@ -305,7 +305,7 @@ export class EmployeesService {
         },
       });
       for (const r of roles) await tx.userRole.create({ data: { userId: u.id, roleId: r.id, organizationId: org, grantedById: user.id } });
-      if (leaveTypes.length) await tx.leaveBalance.createMany({ data: leaveTypes.map((lt) => ({ employeeId: e.id, leaveTypeId: lt.id, year, allocated: lt.annualQuota })), skipDuplicates: true });
+      if (leaveTypes.length) await tx.leaveBalance.createMany({ data: leaveTypes.map((lt) => ({ employeeId: e.id, leaveTypeId: lt.id, year, allocated: lt.annualQuota })) });
       if (inviteToken) {
         await tx.verificationToken.create({ data: { userId: u.id, type: 'PASSWORD_RESET', target: email, tokenHash: sha256(inviteToken), expiresAt: new Date(Date.now() + 72 * 3_600_000) } });
       }

@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { PropertySearchQuery, PropertySearchResult } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../../common/settings.service';
+import { EARTH_RADIUS_M, haversineMeters } from '../../common/geo';
 import { AuthUser } from '../../common/auth/auth-user';
 import { propertyCardSelect, propertyDetailInclude, toPropertyCard, toPropertyDetail } from './property.mappers';
 
@@ -65,15 +66,19 @@ export class PropertySearchService {
 
     let distances: Map<string, number> | null = null;
     if (q.lat !== undefined && q.lng !== undefined) {
+      const { lat, lng } = q;
       const radiusM = (q.radiusKm ?? 5) * 1000;
-      const rows = await this.prisma.$queryRaw<{ id: string; distance: number }[]>`
-        SELECT id, ST_Distance(location, ST_SetSRID(ST_MakePoint(${q.lng}, ${q.lat}), 4326)::geography) AS distance
-        FROM properties
-        WHERE status = 'PUBLISHED' AND "deletedAt" IS NULL AND location IS NOT NULL
-          AND ST_DWithin(location, ST_SetSRID(ST_MakePoint(${q.lng}, ${q.lat}), 4326)::geography, ${radiusM})
-        ORDER BY distance ASC
-        LIMIT ${MAX_GEO_RESULTS}`;
-      distances = new Map(rows.map((r) => [r.id, Math.round((Number(r.distance) / 1000) * 10) / 10]));
+      // $geoWithin uses the 2dsphere index when present and still works while it is being rebuilt
+      // (prisma db push drops indexes it does not know); distances are measured here, nearest first.
+      const within = (await this.prisma.property.findRaw({
+        filter: { status: 'PUBLISHED', deletedAt: null, location: { $geoWithin: { $centerSphere: [[lng, lat], radiusM / EARTH_RADIUS_M] } } },
+        options: { projection: { _id: 1, location: 1 } },
+      })) as unknown as { _id: string; location: { coordinates: [number, number] } }[];
+      const rows = within
+        .map((r) => ({ id: r._id, distance: haversineMeters(lat, lng, r.location.coordinates[1], r.location.coordinates[0]) }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, MAX_GEO_RESULTS);
+      distances = new Map(rows.map((r) => [r.id, Math.round((r.distance / 1000) * 10) / 10]));
       and.push({ id: { in: [...distances.keys()] } });
     }
 

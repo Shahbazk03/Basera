@@ -25,7 +25,7 @@
 - **CORS**: explicit allow-list (`CORS_ORIGINS`) with credentials.
 - **Rate limiting**: global 300 req/min/IP; auth endpoints 10/min; enquiries 5/min; uploads 60/min. Redis-backed when `REDIS_URL` is set (shared across instances), fails open if Redis is down.
 - **Validation**: every body/query/param is validated with Zod; unknown enum values, oversized strings and malformed IDs are rejected (400 with field details).
-- **SQL injection**: Prisma parameterises all queries; raw SQL uses tagged templates (`$queryRaw\`…${value}\``) only.
+- **Query injection (MongoDB)**: queries are built by Prisma from validated input; raw commands (`$runCommandRaw`, `aggregateRaw`, `findRaw`) take only server-built values. Text filters are escaped before Prisma turns them into regular expressions, so search input can neither change a query's meaning nor inject expensive patterns (`backend/src/prisma/mongo-guards.ts`).
 - **XSS**: React escapes output; CMS and page-builder content is structured data (never raw HTML); URLs in CMS content must be http(s) or site-relative (no `javascript:`); JSON-LD is serialised with `<` escaped.
 - Security headers: Helmet on the API; CSP, `X-Frame-Options: DENY`, `nosniff`, referrer and permissions policies on the web apps; console is `noindex`.
 

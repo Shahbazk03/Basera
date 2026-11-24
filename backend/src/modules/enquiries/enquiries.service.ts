@@ -10,7 +10,7 @@ import {
 } from '@estate/shared';
 import type { z } from 'zod';
 import type { enquirySchema } from '@estate/shared';
-import { EnquiryStatus, Prisma } from '../../generated/prisma/client';
+import { EnquiryStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';

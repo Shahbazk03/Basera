@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { PermissionKey, SessionMembership, WorkspaceKey } from '@estate/shared';
-import type { AccountType } from '../../generated/prisma/client';
+import type { AccountType } from '@prisma/client';
 
 export interface RoleGrant {
   key: string;

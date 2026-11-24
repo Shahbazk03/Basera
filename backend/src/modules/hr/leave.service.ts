@@ -8,7 +8,7 @@ import {
   type leaveTypeSchema,
   type leaveYearAllocateSchema,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, ApprovalStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
@@ -16,6 +16,7 @@ import { paginated, Pagination, skipTake } from '../../common/http';
 import { env } from '../../config/env';
 import { NotificationsService, type Recipient } from '../notifications/notifications.service';
 import { assertHr, canHr, dateStr, defaultShift, fmtDate, monthBounds, platformOrg, requireEmployee, toDate, todayIst, workCalendar } from './hr.util';
+import { segmentedPage, type Segment } from '../../common/ordering';
 
 export interface LeaveListQuery extends Pagination {
   status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
@@ -23,7 +24,7 @@ export interface LeaveListQuery extends Pagination {
   employeeId?: string;
 }
 
-const n = (v: Prisma.Decimal | number | null | undefined) => Number(v ?? 0);
+const n = (v: number | null | undefined) => Number(v ?? 0);
 
 @Injectable()
 export class LeaveService {
@@ -150,8 +151,15 @@ export class LeaveService {
         const p = prevBy.get(`${e.id}:${t.id}`);
         const leftover = p ? Math.max(0, n(p.allocated) + n(p.carriedForward) - n(p.used)) : 0;
         const carried = t.carryForward ? Math.min(leftover, t.maxCarryForward != null ? n(t.maxCarryForward) : leftover) : 0;
-        const res = await this.prisma.leaveBalance.createMany({ data: [{ employeeId: e.id, leaveTypeId: t.id, year: input.year, allocated: t.annualQuota, carriedForward: carried }], skipDuplicates: true });
-        created += res.count;
+        const key = { employeeId: e.id, leaveTypeId: t.id, year: input.year };
+        if (await this.prisma.leaveBalance.findUnique({ where: { employeeId_leaveTypeId_year: key }, select: { id: true } })) continue;
+        try {
+          await this.prisma.leaveBalance.create({ data: { ...key, allocated: t.annualQuota, carriedForward: carried } });
+          created += 1;
+        } catch (err) {
+          // Allocated concurrently by another run — same outcome as the former skipDuplicates.
+          if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+        }
       }
     }
     await this.audit.log({ actorId: user.id, action: 'hr.leave_balance.allocate_year', entityType: 'LeaveBalance', organizationId: org, metadata: { year: input.year, created, carryForward: input.carryForward } });
@@ -250,18 +258,28 @@ export class LeaveService {
     }
     if (q.status) where = { ...where, status: q.status };
     if (q.employeeId) where = { ...where, employeeId: q.employeeId };
-    const [rows, total, counts] = await Promise.all([
-      this.prisma.leaveRequest.findMany({
-        where,
-        orderBy: [{ status: 'asc' }, { startDate: 'desc' }],
-        include: {
-          leaveType: { select: { id: true, name: true, code: true, isPaid: true } },
-          employee: { select: { id: true, employeeCode: true, userId: true, managerId: true, user: { select: { fullName: true } }, department: { select: { name: true } } } },
-          approver: { select: { fullName: true } },
+    // Pending requests first (declaration order of ApprovalStatus), latest start date first within each.
+    const segments = Object.values(ApprovalStatus).map((status): Segment<Prisma.LeaveRequestWhereInput, Prisma.LeaveRequestOrderByWithRelationInput[]> => ({
+      where: { AND: [where, { status }] },
+      orderBy: [{ startDate: 'desc' }, { id: 'asc' }],
+    }));
+    const [{ rows, total }, counts] = await Promise.all([
+      segmentedPage(
+        segments,
+        {
+          count: (w) => this.prisma.leaveRequest.count({ where: w }),
+          find: (a) =>
+            this.prisma.leaveRequest.findMany({
+              ...a,
+              include: {
+                leaveType: { select: { id: true, name: true, code: true, isPaid: true } },
+                employee: { select: { id: true, employeeCode: true, userId: true, managerId: true, user: { select: { fullName: true } }, department: { select: { name: true } } } },
+                approver: { select: { fullName: true } },
+              },
+            }),
         },
-        ...skipTake(q),
-      }),
-      this.prisma.leaveRequest.count({ where }),
+        skipTake(q),
+      ),
       this.prisma.leaveRequest.groupBy({ by: ['status'], where: { ...where, status: undefined }, _count: { _all: true } }),
     ]);
     return {

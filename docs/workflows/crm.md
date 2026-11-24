@@ -7,7 +7,7 @@ sequenceDiagram
   participant V as Visitor
   participant W as Website
   participant A as API (POST /public/enquiries)
-  participant DB as PostgreSQL
+  participant DB as MongoDB
   participant Q as Notification outbox
   V->>W: Fills enquiry / callback / site-visit / WhatsApp form
   W->>A: enquirySchema payload + attribution (UTM, page, referrer)

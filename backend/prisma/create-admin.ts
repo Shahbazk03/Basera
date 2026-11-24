@@ -8,9 +8,8 @@
  */
 import { hash } from '@node-rs/argon2';
 import { passwordSchema } from '@estate/shared';
-import { PrismaClient } from '../src/generated/prisma/client';
 import { loadEnvFile } from '../src/config/env';
-import { createPgAdapter } from '../src/prisma/pg-adapter';
+import { DbClient } from '../src/prisma/client';
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -21,22 +20,21 @@ async function main(): Promise<void> {
   const strong = passwordSchema.safeParse(password);
   if (!strong.success) throw new Error(`ADMIN_PASSWORD is too weak: ${strong.error.issues[0].message}`);
 
-  const prisma = new PrismaClient({ adapter: createPgAdapter(process.env.DATABASE_URL!) });
+  const prisma = new DbClient(process.env.DATABASE_URL!);
   try {
     const role = await prisma.role.findUnique({ where: { key: 'SUPER_ADMIN' } });
     const platform = await prisma.organization.findFirst({ where: { type: 'PLATFORM' } });
     if (!role || !platform) throw new Error('Reference data missing — run the seed first');
-    const current = await prisma.user.findUnique({ where: { email }, select: { id: true, userRoles: { where: { roleId: role.id, organizationId: null }, select: { id: true } } } });
+    const current = await prisma.user.findFirst({ where: { email }, select: { id: true, userRoles: { where: { roleId: role.id, organizationId: null }, select: { id: true } } } });
     if (current?.userRoles.length && process.env.ADMIN_RESET_PASSWORD !== 'true') {
       console.log(`Super Admin ${email} already exists — left unchanged (set ADMIN_RESET_PASSWORD=true to reset the password).`);
       return;
     }
     const passwordHash = await hash(password, { memoryCost: 19456, timeCost: 2, parallelism: 1 });
-    const user = await prisma.user.upsert({
-      where: { email },
-      create: { email, fullName: name, passwordHash, accountType: 'STAFF', emailVerifiedAt: new Date() },
-      update: { fullName: name, passwordHash, status: 'ACTIVE', failedLoginCount: 0, lockedUntil: null },
-    });
+    // email is unique through a partial index (users without an email are allowed), so no Prisma upsert by email.
+    const user = current
+      ? await prisma.user.update({ where: { id: current.id }, data: { fullName: name, passwordHash, status: 'ACTIVE', failedLoginCount: 0, lockedUntil: null } })
+      : await prisma.user.create({ data: { email, fullName: name, passwordHash, accountType: 'STAFF', emailVerifiedAt: new Date() } });
     await prisma.organizationMember.upsert({
       where: { organizationId_userId: { organizationId: platform.id, userId: user.id } },
       create: { organizationId: platform.id, userId: user.id, title: 'Owner' },

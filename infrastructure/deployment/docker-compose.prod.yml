@@ -1,6 +1,7 @@
-# Single-host production / staging stack. For production prefer managed PostgreSQL (with PostGIS),
-# managed Redis and S3-compatible object storage — point DATABASE_URL / REDIS_URL / S3_* at them and
-# remove the `postgres` and `redis` services.
+# Single-host production / staging stack (API, website, console, Caddy for custom-domain TLS).
+# The database is a managed MongoDB (Atlas): set DATABASE_URL to its mongodb+srv:// connection string.
+# MongoDB transactions need a replica set, which Atlas provides; no database container is bundled so
+# that no unauthenticated database ever runs next to the app. Prefer managed Redis and S3 as well.
 #
 #   cp infrastructure/deployment/.env.production.example infrastructure/deployment/.env  (fill in values)
 #   docker compose -f infrastructure/deployment/docker-compose.prod.yml --env-file infrastructure/deployment/.env up -d --build
@@ -9,7 +10,7 @@ name: estate-prod
 x-api-env: &api-env
   APP_ENV: ${APP_ENV:-production}
   NODE_ENV: production
-  DATABASE_URL: ${DATABASE_URL}
+  DATABASE_URL: ${DATABASE_URL:?required (MongoDB Atlas connection string)}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   API_PORT: 4000
   CORS_ORIGINS: https://${WEB_DOMAIN},https://${CONSOLE_DOMAIN}
@@ -50,29 +51,16 @@ x-api-env: &api-env
   TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
 
 services:
-  postgres:
-    image: postgis/postgis:17-3.5-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:?required}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
-      POSTGRES_DB: ${POSTGRES_DB:-estate}
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
-      interval: 10s
-      retries: 10
-
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes']
     volumes: [redisdata:/data]
 
+  # Release job: syncs collections/indexes (prisma db push) and reference data before the API starts.
   migrate:
     build: { context: ../.., dockerfile: infrastructure/docker/api.Dockerfile, target: migrate }
-    environment: { DATABASE_URL: '${DATABASE_URL}' }
-    depends_on: { postgres: { condition: service_healthy } }
+    environment: { DATABASE_URL: '${DATABASE_URL}', APP_ENV: '${APP_ENV:-production}' }
     restart: 'no'
 
   api:
@@ -122,7 +110,6 @@ services:
     depends_on: [web, console, api]
 
 volumes:
-  pgdata:
   redisdata:
   caddy_data:
   caddy_config:

@@ -234,7 +234,7 @@ export class FinanceScheduler {
   async run(): Promise<void> {
     if (env().APP_ENV === 'test') return;
     try {
-      const n = await this.prisma.withAdvisoryLock('jobs:reimbursement-payroll-sync', (tx) => this.finance.syncPayrollPaidReimbursements(tx));
+      const n = await this.prisma.withJobLock('jobs:reimbursement-payroll-sync', (tx) => this.finance.syncPayrollPaidReimbursements(tx));
       if (n) this.logger.log(`Marked ${n} payroll-paid reimbursement(s) as paid`);
     } catch (err) {
       this.logger.error('Reimbursement sync failed', err instanceof Error ? err.stack : String(err));

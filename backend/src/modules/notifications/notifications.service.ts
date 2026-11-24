@@ -3,7 +3,7 @@ import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import type { PermissionKey } from '@estate/shared';
 import { env } from '../../config/env';
-import { DeliveryStatus, NotificationChannel } from '../../generated/prisma/client';
+import { DeliveryStatus, NotificationChannel } from '@prisma/client';
 import { Db, PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../../common/settings.service';
 import { ChannelProvider, EmailProvider, SmsProvider, WhatsAppProvider } from './providers';
@@ -164,11 +164,13 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
 
   /** One delivery attempt with an atomic claim (safe under concurrent workers). */
   async deliver(id: string): Promise<DeliveryStatus | null> {
-    const claimed = await this.prisma.$queryRaw<{ id: string }[]>`
-      UPDATE "communication_logs" SET "nextAttemptAt" = now() + interval '5 minutes', "updatedAt" = now()
-      WHERE "id" = ${id}::uuid AND "status" = 'QUEUED' AND "nextAttemptAt" <= now()
-      RETURNING "id"`;
-    if (!claimed.length) return null;
+    // Single-document conditional update = atomic claim: only one worker moves nextAttemptAt forward.
+    const now = new Date();
+    const claimed = await this.prisma.communicationLog.updateMany({
+      where: { id, status: 'QUEUED', nextAttemptAt: { lte: now } },
+      data: { nextAttemptAt: new Date(now.getTime() + 5 * 60_000) },
+    });
+    if (!claimed.count) return null;
     const row = await this.prisma.communicationLog.findUniqueOrThrow({ where: { id } });
     if (row.channel === 'IN_APP') return null;
     const provider = this.providers[row.channel];

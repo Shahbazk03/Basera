@@ -17,11 +17,12 @@ import type { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { map, Observable } from 'rxjs';
 import { ZodError } from 'zod';
-import { Prisma } from '../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { corsOrigins } from '../config/env';
 import type { RequestWithUser } from './decorators';
 import { zodIssues } from './zod.pipe';
 import { hasAuthCookie } from './auth/cookies';
+import { uniqueIndexFields } from '../prisma/schema-info';
 
 // ───────────────────────── Request id ─────────────────────────
 
@@ -153,14 +154,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
 function mapPrismaError(e: Prisma.PrismaClientKnownRequestError): { status: number; message: string; code: string } {
   switch (e.code) {
     case 'P2002': {
-      const target = (e.meta?.target as string[] | string | undefined) ?? (e.meta?.driverAdapterError as { cause?: { constraint?: { fields?: string[] } } } | undefined)?.cause?.constraint?.fields;
-      const fields = Array.isArray(target) ? target.join(', ') : target;
-      return { status: 409, message: fields ? `A record with this ${fields} already exists` : 'A record with these details already exists', code: 'DUPLICATE' };
+      // MongoDB reports the index name (e.g. users_email_key); translate it back to field names.
+      const target = e.meta?.target as string[] | string | undefined;
+      const fields = Array.isArray(target) ? target : target ? uniqueIndexFields(target) : undefined;
+      return { status: 409, message: fields?.length ? `A record with this ${fields.join(', ')} already exists` : 'A record with these details already exists', code: 'DUPLICATE' };
     }
     case 'P2025':
+      if (/nested connect/i.test(String(e.meta?.cause ?? ''))) return { status: 409, message: 'This record references a missing record', code: 'REFERENCE_CONFLICT' };
       return { status: 404, message: 'Record not found', code: 'NOT_FOUND' };
     case 'P2003':
       return { status: 409, message: 'This record is referenced by other records or references a missing record', code: 'REFERENCE_CONFLICT' };
+    case 'P2014':
+      return { status: 409, message: 'This change would break a required link between records', code: 'REFERENCE_CONFLICT' };
+    case 'P2010':
+      // MongoDB collection validators (the former CHECK constraints) reject the document with code 121.
+      if (String(e.meta?.code) === '121') return { status: 400, message: 'The data failed a database integrity check', code: 'INTEGRITY_CHECK' };
+      return { status: 500, message: 'Database error', code: 'DB_P2010' };
     case 'P2034':
       return { status: 409, message: 'The record was changed by someone else. Please retry.', code: 'WRITE_CONFLICT' };
     default:

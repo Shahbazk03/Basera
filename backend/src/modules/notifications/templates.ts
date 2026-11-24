@@ -1,4 +1,4 @@
-import type { NotificationChannel } from '../../generated/prisma/client';
+import type { NotificationChannel } from '@prisma/client';
 
 export interface TemplateDefinition {
   subject?: string;

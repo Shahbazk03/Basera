@@ -11,7 +11,7 @@ import type {
   reimbursementSchema,
   transactionSchema,
 } from '@estate/shared';
-import { Prisma, TransactionType } from '../../generated/prisma/client';
+import { Prisma, TransactionType } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
@@ -584,27 +584,39 @@ export class FinanceService {
     if (end <= start) throw new BadRequestException('The end month must be after the start month');
     if ((ty - start.getUTCFullYear()) * 12 + tm - (start.getUTCMonth() + 1) > 35) throw new BadRequestException('Report at most 36 months at a time');
 
-    const monthOf = (col: string) => Prisma.raw(`to_char(date_trunc('month', ${col}), 'YYYY-MM')`);
-    const txns = await this.prisma.$queryRaw<{ month: string; type: string; direction: string; total: Prisma.Decimal }[]>`
-      SELECT ${monthOf('"txnDate"')} AS month, type::text AS type, direction::text AS direction, sum(amount) AS total
-      FROM transactions WHERE "organizationId" = ${orgId}::uuid AND "txnDate" >= ${start} AND "txnDate" < ${end}
-      GROUP BY 1, 2, 3`;
-    const dealPayments = await this.prisma.$queryRaw<{ month: string; receivedBy: string; total: Prisma.Decimal }[]>`
-      SELECT ${monthOf('dp."receivedOn"')} AS month, dp."receivedBy"::text AS "receivedBy", sum(dp.amount) AS total
-      FROM deal_payments dp JOIN deals d ON d.id = dp."dealId"
-      WHERE d."organizationId" = ${orgId}::uuid AND dp."receivedOn" >= ${start} AND dp."receivedOn" < ${end}
-      GROUP BY 1, 2`;
-    // createdAt is a timestamptz: bucket by the IST month and filter on IST month boundaries so no record lands outside the listed months.
+    // Date-only fields (txnDate, receivedOn, expenseDate) are stored at UTC midnight, so their UTC
+    // month is the calendar month. createdAt is an instant: bucket it by the IST month and filter on
+    // IST month boundaries so no record lands outside the listed months.
     const IST_MS = 330 * 60 * 1000;
-    const accrued = await this.prisma.$queryRaw<{ month: string; total: Prisma.Decimal }[]>`
-      SELECT ${monthOf('"createdAt" AT TIME ZONE \'Asia/Kolkata\'')} AS month, sum(amount) AS total
-      FROM commission_records WHERE "organizationId" = ${orgId}::uuid AND status <> 'CANCELLED' AND "createdAt" >= ${new Date(start.getTime() - IST_MS)} AND "createdAt" < ${new Date(end.getTime() - IST_MS)}
-      GROUP BY 1`;
-    const expensesByCategory = await this.prisma.$queryRaw<{ category: string; total: Prisma.Decimal }[]>`
-      SELECT c.name AS category, sum(e.amount) AS total
-      FROM expenses e JOIN expense_categories c ON c.id = e."categoryId"
-      WHERE e."organizationId" = ${orgId}::uuid AND e.status IN ('APPROVED', 'PAID') AND e."expenseDate" >= ${start} AND e."expenseDate" < ${end}
-      GROUP BY 1 ORDER BY 2 DESC`;
+    const monthOf = (d: Date) => d.toISOString().slice(0, 7);
+    const istMonthOf = (d: Date) => new Date(d.getTime() + IST_MS).toISOString().slice(0, 7);
+    const [txnRows, paymentRows, commissionRows, expenseRows] = await Promise.all([
+      this.prisma.financeTransaction.findMany({ where: { organizationId: orgId, txnDate: { gte: start, lt: end } }, select: { txnDate: true, type: true, direction: true, amount: true } }),
+      this.prisma.dealPayment.findMany({ where: { deal: { organizationId: orgId }, receivedOn: { gte: start, lt: end } }, select: { receivedOn: true, receivedBy: true, amount: true } }),
+      this.prisma.commissionRecord.findMany({
+        where: { organizationId: orgId, status: { not: 'CANCELLED' }, createdAt: { gte: new Date(start.getTime() - IST_MS), lt: new Date(end.getTime() - IST_MS) } },
+        select: { createdAt: true, amount: true },
+      }),
+      this.prisma.expense.findMany({ where: { organizationId: orgId, status: { in: ['APPROVED', 'PAID'] }, expenseDate: { gte: start, lt: end } }, select: { amount: true, category: { select: { name: true } } } }),
+    ]);
+    /** Sums amounts (in paise, exactly) per key; returns rupees. */
+    const sumBy = <T>(items: T[], key: (x: T) => string, amount: (x: T) => number) => {
+      const totals = new Map<string, number>();
+      for (const x of items) totals.set(key(x), (totals.get(key(x)) ?? 0) + toPaise(amount(x)));
+      return [...totals].map(([k, paise]) => ({ key: k, total: fromPaise(paise) }));
+    };
+    const txns = sumBy(txnRows, (t) => `${monthOf(t.txnDate)}|${t.type}|${t.direction}`, (t) => t.amount).map(({ key, total }) => {
+      const [month, type, direction] = key.split('|');
+      return { month, type, direction, total };
+    });
+    const dealPayments = sumBy(paymentRows, (p) => `${monthOf(p.receivedOn)}|${p.receivedBy}`, (p) => p.amount).map(({ key, total }) => {
+      const [month, receivedBy] = key.split('|');
+      return { month, receivedBy, total };
+    });
+    const accrued = sumBy(commissionRows, (c) => istMonthOf(c.createdAt), (c) => c.amount).map(({ key, total }) => ({ month: key, total }));
+    const expensesByCategory = sumBy(expenseRows, (e) => e.category.name, (e) => e.amount)
+      .map(({ key, total }) => ({ category: key, total }))
+      .sort((a, b) => b.total - a.total);
     const [invoiceOutstanding, commissionsOutstanding] = await Promise.all([
       this.prisma.invoice.aggregate({ where: { organizationId: orgId, status: { in: ['ISSUED', 'PARTIALLY_PAID'] } }, _sum: { total: true, amountPaid: true } }),
       this.prisma.commissionRecord.aggregate({ where: { organizationId: orgId, status: { in: ['APPROVED', 'PAYABLE'] } }, _sum: { amount: true, amountPaid: true } }),
@@ -612,7 +624,7 @@ export class FinanceService {
 
     const months: string[] = [];
     for (let d = new Date(start); d < end; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) months.push(d.toISOString().slice(0, 7));
-    const n = (v: Prisma.Decimal | null | undefined) => Number(v ?? 0);
+    const n = (v: number | null | undefined) => Number(v ?? 0);
     const rows = months.map((month) => {
       const t = txns.filter((x) => x.month === month);
       const sumType = (type: string) => t.filter((x) => x.type === type).reduce((s, x) => s + n(x.total), 0);

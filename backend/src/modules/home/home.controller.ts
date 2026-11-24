@@ -7,6 +7,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PropertySearchService } from '../properties/property-search.service';
 import { PropertiesModule } from '../properties/properties.module';
 import { projectCards, publicProjectWhere } from '../projects/project-card';
+import { sortByEnum } from '../../common/ordering';
+import { PropertySegment } from '@prisma/client';
 
 interface HomeSection {
   type: string;
@@ -61,7 +63,14 @@ export class HomeController {
         }
         case 'FEATURED_PROPERTIES': {
           const featured = await this.search.cards({ ...cityWhere, isFeatured: true }, limit);
-          data = featured.length >= 4 ? featured : await this.search.cards({ ...cityWhere }, limit, [{ isFeatured: 'desc' }, { verificationStatus: 'asc' }, { viewCount: 'desc' }]);
+          if (featured.length >= 4) {
+            data = featured;
+          } else {
+            // Fallback: verified listings before the rest; featured, then most viewed, within each.
+            const verified = await this.search.cards({ ...cityWhere, verificationStatus: 'VERIFIED' }, limit, [{ isFeatured: 'desc' }, { viewCount: 'desc' }]);
+            const rest = verified.length < limit ? await this.search.cards({ ...cityWhere, verificationStatus: { not: 'VERIFIED' } }, limit - verified.length, [{ isFeatured: 'desc' }, { viewCount: 'desc' }]) : [];
+            data = [...verified, ...rest];
+          }
           break;
         }
         case 'POPULAR_LOCALITIES': {
@@ -151,7 +160,11 @@ export class HomeController {
       where: { ...this.search.publicBaseWhere(), ...(city ? { cityId: city.id } : {}) },
       _count: { _all: true },
     });
-    const types = await this.prisma.propertyType.findMany({ where: { isActive: true }, orderBy: [{ segment: 'asc' }, { sortOrder: 'asc' }], select: { id: true, name: true, slug: true, segment: true, formProfile: true } });
+    const types = sortByEnum(
+      await this.prisma.propertyType.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }], select: { id: true, name: true, slug: true, segment: true, formProfile: true } }),
+      (t) => t.segment,
+      PropertySegment,
+    );
     return types.map((t) => ({
       ...t,
       sale: groups.find((g) => g.propertyTypeId === t.id && g.listingType === 'SALE')?._count._all ?? 0,

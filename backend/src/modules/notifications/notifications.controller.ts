@@ -10,6 +10,8 @@ import { AuditService } from '../../common/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 import { DEFAULT_TEMPLATES } from './templates';
+import { enumRank } from '../../common/ordering';
+import { NotificationChannel } from '@prisma/client';
 
 const logQuery = paginationSchema.extend({
   status: z.enum(DELIVERY_STATUSES).optional(),
@@ -117,7 +119,8 @@ export class NotificationsController {
   @RequirePermissions('notification.manage')
   async templates(@CurrentUser() user: AuthUser) {
     assertPlatformAdmin(user);
-    const custom = await this.prisma.notificationTemplate.findMany({ orderBy: [{ eventKey: 'asc' }, { channel: 'asc' }] });
+    const channelRank = enumRank(NotificationChannel);
+    const custom = (await this.prisma.notificationTemplate.findMany({ orderBy: [{ eventKey: 'asc' }] })).sort((a, b) => (a.eventKey === b.eventKey ? channelRank(a.channel) - channelRank(b.channel) : 0));
     const defaults = Object.entries(DEFAULT_TEMPLATES).flatMap(([eventKey, channels]) =>
       Object.entries(channels).map(([channel, t]) => ({ eventKey, channel, subject: t?.subject ?? null, body: t?.body ?? '' })),
     );

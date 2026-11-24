@@ -18,7 +18,7 @@ flowchart LR
   Edge --> CON["frontend/console — Next.js\nback-office workspaces"]
   WEB -->|/api/v1 rewrite + SSR fetch| API["backend — NestJS\n/api/v1 REST"]
   CON -->|/api/v1 rewrite| API
-  API --> PG[(PostgreSQL 17\n+ PostGIS + pg_trgm)]
+  API --> PG[(MongoDB\nAtlas · replica set)]
   API --> R[(Redis\nBullMQ · rate limits)]
   API --> OBJ[(S3-compatible storage\npublic + private buckets)]
   API --> EXT[SMTP · Twilio · WhatsApp Cloud]
@@ -70,14 +70,14 @@ Why two frontends instead of five: public pages and back-office have different r
 
 ## Data and integrity
 
-- PostgreSQL with UUID v7 keys, `numeric` money, `timestamptz`, soft deletes for business entities, CHECK constraints for invariants, PostGIS geography columns maintained by triggers, trigram GIN indexes for search/autocomplete. See [database](../database/schema.md).
-- Concurrency-sensitive transitions (listing status, unit reservations/bookings, payroll runs) use **conditional updates** (`UPDATE … WHERE status = expected AND version = n`) so two concurrent requests can never both succeed.
+- MongoDB (via Prisma 6) with UUID v7 keys, money in rupees with paise arithmetic, soft deletes for business entities, collection validators for invariants, GeoJSON locations with a 2dsphere index, and a query layer that restores relational guarantees (reference checks, explicit nulls, literal text search, transaction retries). See [database](../database/schema.md).
+- Concurrency-sensitive transitions (listing status, unit reservations/bookings, payroll runs) use **conditional updates** (update only where status = expected and version = n) so two concurrent requests can never both succeed.
 - Every mutation writes an **audit log** entry (inside the same transaction where one exists).
 
 ## Background work
 
 - **Notification outbox**: notifications are written to `communication_logs` in the same transaction as the business change, then dispatched by BullMQ (Redis) or, without Redis, an in-process poller. Retries use exponential backoff; final status reflects the provider's real response (`SENT`, `FAILED`, `NOT_CONFIGURED`).
-- **Scheduled jobs** (`@nestjs/schedule`) run under PostgreSQL advisory locks so multiple API instances never run the same job twice: listing expiry, project status derivation from booking windows and inventory, reservation expiry, domain re-verification, follow-up reminders, commission generation, partner-subscription expiry, and marking commissions/reimbursements paid through payroll once the payroll payment is recorded.
+- **Scheduled jobs** (`@nestjs/schedule`) run under an expiring lease (`job_locks`) so multiple API instances never run the same job twice: listing expiry, project status derivation from booking windows and inventory, reservation expiry, domain re-verification, follow-up reminders, commission generation, partner-subscription expiry, and marking commissions/reimbursements paid through payroll once the payroll payment is recorded.
 
 ## Project microsites and domains
 

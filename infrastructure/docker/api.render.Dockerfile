@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1.7
 # API image for Render (or any single-container host without a separate release job).
-# The container runs its release tasks at start-up — database migrations, reference data and the first
-# Super Admin — then starts the API (see api-start.sh). Build context: repository root.
+# The container runs its release tasks at start-up — database indexes (prisma db push), reference data
+# and the first Super Admin — then starts the API (see api-start.sh). Build context: repository root.
 #   docker build -f infrastructure/docker/api.render.Dockerfile -t basera-api .
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+# Prisma's query engine needs OpenSSL; CA certificates are needed for TLS to MongoDB Atlas.
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
 COPY frontend/web/package.json frontend/web/
@@ -20,9 +22,9 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY shared shared
 COPY backend backend
-# DATABASE_URL is only read by prisma.config.ts while generating the client; no connection is made.
-RUN DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/shared \
- && DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/api
+# Generating the Prisma client makes no database connection; a placeholder URL is enough.
+RUN DATABASE_URL=mongodb://build:27017/build npm run build -w @estate/shared \
+ && DATABASE_URL=mongodb://build:27017/build npm run build -w @estate/api
 
 # Runtime keeps the Prisma CLI and tsx so the release tasks can run inside the container.
 FROM build AS runtime

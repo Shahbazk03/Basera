@@ -6,7 +6,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { hashPassword } from '../src/common/crypto';
-import type { AccountType, OrganizationType } from '../src/generated/prisma/client';
+import type { AccountType, OrganizationType } from '@prisma/client';
 
 export const ORIGIN = 'http://localhost:3300';
 export const PASSWORD = 'Integration-Test-1';

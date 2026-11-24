@@ -8,7 +8,9 @@ import { conflict, notFound, paginated, paginationSchema, skipTake } from '../..
 import { PatchPipe, UuidParam, ZodPipe } from '../../common/zod.pipe';
 import { AuditService } from '../../common/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '../../generated/prisma/client';
+import { TRIGRAM_MATCH_THRESHOLD, trigramSimilarity } from '../../common/fuzzy';
+import { sortByEnum } from '../../common/ordering';
+import { PropertySegment } from '@prisma/client';
 
 const citySchema = z.object({
   stateId: z.uuid(),
@@ -85,20 +87,37 @@ export class CatalogController {
     return rows.map(({ _count, ...l }) => ({ ...l, activeListings: _count.properties }));
   }
 
-  /** Autocomplete across localities, cities and projects (trigram similarity backed by GIN indexes). */
+  /** Active localities (with their active city) for autocomplete, cached briefly per city. */
+  private readonly localityCache = new Map<string, { at: number; rows: { id: string; name: string; slug: string; pincode: string | null; citySlug: string; cityName: string }[] }>();
+
+  private async activeLocalities(cityId: string | null) {
+    const key = cityId ?? '*';
+    const hit = this.localityCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return hit.rows;
+    const rows = await this.prisma.locality.findMany({
+      where: { isActive: true, city: { isActive: true }, ...(cityId ? { cityId } : {}) },
+      select: { id: true, name: true, slug: true, pincode: true, city: { select: { slug: true, name: true } } },
+      orderBy: { name: 'asc' },
+      take: 20_000,
+    });
+    const flat = rows.map((l) => ({ id: l.id, name: l.name, slug: l.slug, pincode: l.pincode, citySlug: l.city.slug, cityName: l.city.name }));
+    this.localityCache.set(key, { at: Date.now(), rows: flat });
+    return flat;
+  }
+
+  /** Autocomplete across localities, cities and projects (typo-tolerant trigram matching for localities). */
   @Public()
   @Get('public/locations/suggest')
   async suggest(@Query(new ZodPipe(z.object({ q: z.string().trim().min(1).max(60), city: z.string().max(80).optional() }))) q: { q: string; city?: string }) {
     const term = q.q;
-    const like = `%${term.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    const lower = term.toLowerCase();
     const city = q.city ? await this.prisma.city.findFirst({ where: { slug: q.city, isActive: true }, select: { id: true } }) : null;
-    const localities = await this.prisma.$queryRaw<{ id: string; name: string; slug: string; citySlug: string; cityName: string; score: number }[]>`
-      SELECT l.id, l.name, l.slug, c.slug AS "citySlug", c.name AS "cityName", similarity(l.name, ${term}) AS score
-      FROM localities l JOIN cities c ON c.id = l."cityId"
-      WHERE l."isActive" AND c."isActive" AND (l.name ILIKE ${like} OR l.name % ${term} OR l.pincode = ${term})
-        ${city ? Prisma.sql`AND l."cityId" = ${city.id}::uuid` : Prisma.empty}
-      ORDER BY (l.name ILIKE ${`${term.replace(/[%_\\]/g, (m) => `\\${m}`)}%`}) DESC, score DESC, l.name ASC
-      LIMIT 8`;
+    // Same ranking as before: prefix matches first, then similarity, then name.
+    const localities = (await this.activeLocalities(city?.id ?? null))
+      .map((l) => ({ ...l, prefix: l.name.toLowerCase().startsWith(lower), contains: l.name.toLowerCase().includes(lower), score: trigramSimilarity(l.name, term) }))
+      .filter((l) => l.contains || l.pincode === term || l.score >= TRIGRAM_MATCH_THRESHOLD)
+      .sort((a, b) => Number(b.prefix) - Number(a.prefix) || b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, 8);
     const cities = await this.prisma.city.findMany({ where: { isActive: true, name: { contains: term, mode: 'insensitive' } }, select: { id: true, name: true, slug: true }, take: 3 });
     const projects = await this.prisma.project.findMany({
       where: { isPublished: true, deletedAt: null, status: { notIn: ['DRAFT', 'ARCHIVED'] }, name: { contains: term, mode: 'insensitive' } },
@@ -114,12 +133,13 @@ export class CatalogController {
 
   @Public()
   @Get('public/property-types')
-  propertyTypes() {
-    return this.prisma.propertyType.findMany({
+  async propertyTypes() {
+    const rows = await this.prisma.propertyType.findMany({
       where: { isActive: true },
-      orderBy: [{ segment: 'asc' }, { sortOrder: 'asc' }],
+      orderBy: [{ sortOrder: 'asc' }],
       select: { id: true, segment: true, name: true, slug: true, formProfile: true, allowSale: true, allowRent: true, description: true },
     });
+    return sortByEnum(rows, (t) => t.segment, PropertySegment);
   }
 
   @Public()
@@ -215,8 +235,9 @@ export class CatalogController {
 
   @Get('admin/property-types')
   @RequirePermissions('catalog.manage')
-  adminPropertyTypes() {
-    return this.prisma.propertyType.findMany({ orderBy: [{ segment: 'asc' }, { sortOrder: 'asc' }], include: { _count: { select: { properties: true } } } });
+  async adminPropertyTypes() {
+    const rows = await this.prisma.propertyType.findMany({ orderBy: [{ sortOrder: 'asc' }], include: { _count: { select: { properties: true } } } });
+    return sortByEnum(rows, (t) => t.segment, PropertySegment);
   }
 
   @Post('admin/property-types')

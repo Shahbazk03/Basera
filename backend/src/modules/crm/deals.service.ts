@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { DEAL_STATUS_TRANSITIONS, findPropertyTransition, fromPaise, localDateString, toPaise, type DealStatus } from '@estate/shared';
 import type { z } from 'zod';
 import type { dealCreateSchema, dealPaymentSchema, dealStatusSchema } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';

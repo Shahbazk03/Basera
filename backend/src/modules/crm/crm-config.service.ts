@@ -9,7 +9,7 @@ import type {
   routingTestSchema,
   salesTeamSchema,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, CampaignStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
@@ -17,6 +17,7 @@ import { paginated, Pagination, skipTake } from '../../common/http';
 import { normalizePhone } from '@estate/shared';
 import { AssignmentService } from './assignment.service';
 import { assignableUsers, OPEN_LEAD_WHERE, orgScope, resolveOrg } from './crm-access';
+import { sortByEnum } from '../../common/ordering';
 
 /** Sales teams, assignment rules, campaigns, lead sources and customers. */
 @Injectable()
@@ -246,7 +247,7 @@ export class CrmConfigService {
 
   async campaigns(user: AuthUser) {
     const scope = orgScope(user, 'marketing.manage');
-    const rows = await this.prisma.campaign.findMany({ where: scope, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }], include: { organization: { select: { id: true, name: true } } } });
+    const rows = sortByEnum(await this.prisma.campaign.findMany({ where: scope, orderBy: [{ createdAt: 'desc' }], include: { organization: { select: { id: true, name: true } } } }), (c) => c.status, CampaignStatus);
     const counts = await this.prisma.lead.groupBy({ by: ['campaignId', 'status'], where: { campaignId: { in: rows.map((r) => r.id) }, deletedAt: null }, _count: { _all: true } });
     return rows.map((c) => {
       const mine = counts.filter((x) => x.campaignId === c.id);

@@ -2,8 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { calculateCommission, COMMISSION_STATUS_TRANSITIONS, fromPaise, toPaise, type CommissionStatementTotals } from '@estate/shared';
 import type { z } from 'zod';
 import type { commissionManualSchema, commissionPayViaPayrollSchema, commissionRuleSchema, payoutCreateSchema, payoutPaySchema } from '@estate/shared';
-import { CommissionRecipientType, CommissionStatus, Prisma } from '../../generated/prisma/client';
-import { PrismaService, Tx } from '../../prisma/prisma.service';
+import { CommissionRecipientType, CommissionStatus, Prisma } from '@prisma/client';
+import { lockInTransaction, PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuditService } from '../../common/audit.service';
 import { nextReference } from '../../common/references';
@@ -158,7 +158,7 @@ export class CommissionsService {
   async generateForDeal(dealId: string, actor?: AuthUser): Promise<GenerationResult> {
     const result = await this.prisma.$transaction(
       async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`commission:${dealId}`}))`;
+        await lockInTransaction(tx, `commission:${dealId}`);
         const deal = await tx.deal.findUnique({
           where: { id: dealId },
           include: {

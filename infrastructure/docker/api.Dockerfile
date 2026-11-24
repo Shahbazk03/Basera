@@ -4,6 +4,8 @@
 FROM node:22-bookworm-slim AS base
 WORKDIR /repo
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+# Prisma's query engine needs OpenSSL; CA certificates are needed for TLS to MongoDB Atlas.
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # ── Dependencies (all workspaces so npm ci matches the lockfile) ─────────────
 FROM base AS deps
@@ -21,18 +23,18 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY shared shared
 COPY backend backend
-# DATABASE_URL is only needed by prisma.config.ts at generate time; no connection is made.
-RUN DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/shared \
- && DATABASE_URL=postgresql://build:build@localhost:5432/build npm run build -w @estate/api
+# Generating the Prisma client makes no database connection; a placeholder URL is enough.
+RUN DATABASE_URL=mongodb://build:27017/build npm run build -w @estate/shared \
+ && DATABASE_URL=mongodb://build:27017/build npm run build -w @estate/api
 
 # ── Production dependencies only ────────────────────────────────────────────
 FROM deps AS prod-deps
 RUN npm prune --omit=dev --workspace @estate/api --workspace @estate/shared --include-workspace-root=false || npm prune --omit=dev
 
-# ── Migration job image (has the Prisma CLI) ───────────────────────────────
+# ── Release job image (has the Prisma CLI): sync indexes, then reference data ─
 FROM build AS migrate
 WORKDIR /repo/backend
-CMD ["npx", "prisma", "migrate", "deploy"]
+CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx prisma/seed.ts --reference"]
 
 # ── Runtime ─────────────────────────────────────────────────────────────────
 FROM base AS runtime

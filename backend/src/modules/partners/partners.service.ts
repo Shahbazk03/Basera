@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { enumLabel, PARTNER_LIST_TYPES, type PermissionKey, localDateString } from '@estate/shared';
 import type { z } from 'zod';
 import type { orgVerificationDecisionSchema, subscriptionAssignSchema, subscriptionPlanSchema } from '@estate/shared';
-import { BillingPeriod, OrganizationType, Prisma } from '../../generated/prisma/client';
+import { BillingPeriod, OrganizationType, Prisma } from '@prisma/client';
 import { PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';

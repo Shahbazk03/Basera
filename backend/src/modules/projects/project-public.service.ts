@@ -11,7 +11,7 @@ import {
   type ProjectSearchQuery,
   type PublicUnit,
 } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, MediaType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { SettingsService } from '../../common/settings.service';
@@ -21,6 +21,7 @@ import { FilesService } from '../files/files.service';
 import { projectCardSelect, projectCards, publicProjectWhere, toProjectCard, unitStatsFor } from './project-card';
 import { domainUrl } from './domains.service';
 import { PageService } from './page.service';
+import { sortByEnum } from '../../common/ordering';
 
 const PRICE_VISIBLE: string[] = ['AVAILABLE', 'ON_HOLD', 'RESERVED'];
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
@@ -90,7 +91,7 @@ export class ProjectPublicService {
         developerOrg: {
           select: { id: true, name: true, slug: true, type: true, logoUrl: true, description: true, website: true, verificationStatus: true, developerProfile: { select: { establishedYear: true, projectsDelivered: true, about: true } } },
         },
-        media: { orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }], select: { id: true, type: true, url: true, caption: true } },
+        media: { orderBy: [{ sortOrder: 'asc' }], select: { id: true, type: true, url: true, caption: true } }, // grouped by type below
         documents: { where: { visibility: { in: ['PUBLIC', 'ON_REQUEST'] } }, orderBy: { sortOrder: 'asc' }, select: { id: true, title: true, docType: true, visibility: true } },
         amenities: { select: { amenity: { select: { id: true, name: true, icon: true, category: true, isActive: true } } } },
         nearbyPlaces: { orderBy: { sortOrder: 'asc' } },
@@ -165,7 +166,7 @@ export class ProjectPublicService {
       approvalDetails: p.approvalDetails,
       legalInformation: p.legalInformation,
       serverTime: now.toISOString(),
-      media: p.media,
+      media: sortByEnum(p.media, (m) => m.type, MediaType),
       amenities: p.amenities.filter((a) => a.amenity.isActive).map(({ amenity: { isActive: _i, ...a } }) => a),
       nearbyPlaces: p.nearbyPlaces.map((n) => ({ id: n.id, category: n.category, name: n.name, distanceKm: num(n.distanceKm)!, travelMinutes: n.travelMinutes })),
       faqs: p.faqs.map((f) => ({ id: f.id, question: f.question, answer: f.answer })),

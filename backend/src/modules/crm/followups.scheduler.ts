@@ -7,7 +7,7 @@ import { SettingsService } from '../../common/settings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 /**
- * Every 5 minutes (one instance via advisory lock):
+ * Every 5 minutes (one instance via a job lease):
  *  • reminds assignees of follow-ups due within `leads.followUpReminderMinutes` (once per follow-up);
  *  • marks PENDING follow-ups more than 24 hours overdue as MISSED.
  */
@@ -34,7 +34,7 @@ export class FollowUpsScheduler {
 
   async run(now: Date = new Date()): Promise<{ reminded: number; missed: number } | null> {
     const minutes = await this.settings.getNumber('leads.followUpReminderMinutes');
-    const result = await this.prisma.withAdvisoryLock('jobs:crm-followups', async (tx) => {
+    const result = await this.prisma.withJobLock('jobs:crm-followups', async (tx) => {
       const due = await tx.leadFollowUp.findMany({
         where: {
           status: 'PENDING',

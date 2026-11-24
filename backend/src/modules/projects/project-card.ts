@@ -1,5 +1,5 @@
 import { computeProjectStatus, enumLabel, type ProjectCard } from '@estate/shared';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import type { Db } from '../../prisma/prisma.service';
 import { iso, isoDate, num } from '../../common/http';
 
@@ -48,33 +48,40 @@ export interface UnitStats {
   types: string[];
 }
 
-/** One aggregate query for many projects' live inventory. */
+const UNRELEASED = new Set(['NOT_RELEASED', 'BLOCKED']);
+
+/** Live inventory for many projects: two grouped queries (by status, and by unit type/configuration). */
 export async function unitStatsFor(db: Db, projectIds: string[]): Promise<Map<string, UnitStats>> {
   if (!projectIds.length) return new Map();
-  const rows = await db.$queryRaw<{ projectId: string; available: bigint; released: bigint; total: bigint; priceMin: Prisma.Decimal | null; priceMax: Prisma.Decimal | null; types: string[] | null }[]>`
-    SELECT "projectId",
-      count(*) FILTER (WHERE status = 'AVAILABLE') AS available,
-      count(*) FILTER (WHERE status NOT IN ('NOT_RELEASED', 'BLOCKED')) AS released,
-      count(*) AS total,
-      min("totalPrice") FILTER (WHERE status NOT IN ('NOT_RELEASED', 'BLOCKED')) AS "priceMin",
-      max("totalPrice") FILTER (WHERE status NOT IN ('NOT_RELEASED', 'BLOCKED')) AS "priceMax",
-      array_agg(DISTINCT COALESCE(configuration, "unitType"::text)) AS types
-    FROM project_units
-    WHERE "projectId" = ANY(${projectIds}::uuid[])
-    GROUP BY "projectId"`;
-  return new Map(
-    rows.map((r) => [
-      r.projectId,
-      {
-        available: Number(r.available),
-        released: Number(r.released),
-        total: Number(r.total),
-        priceMin: r.priceMin === null ? null : Number(r.priceMin),
-        priceMax: r.priceMax === null ? null : Number(r.priceMax),
-        types: (r.types ?? []).filter(Boolean),
-      },
-    ]),
-  );
+  const [byStatus, byType] = await Promise.all([
+    db.projectUnit.groupBy({ by: ['projectId', 'status'], where: { projectId: { in: projectIds } }, _count: { _all: true }, _min: { totalPrice: true }, _max: { totalPrice: true } }),
+    db.projectUnit.groupBy({ by: ['projectId', 'configuration', 'unitType'], where: { projectId: { in: projectIds } } }),
+  ]);
+  const stats = new Map<string, UnitStats>();
+  const get = (id: string) => {
+    let s = stats.get(id);
+    if (!s) stats.set(id, (s = { available: 0, released: 0, total: 0, priceMin: null, priceMax: null, types: [] }));
+    return s;
+  };
+  for (const g of byStatus) {
+    const s = get(g.projectId);
+    s.total += g._count._all;
+    if (g.status === 'AVAILABLE') s.available += g._count._all;
+    if (UNRELEASED.has(g.status)) continue;
+    s.released += g._count._all;
+    if (g._min.totalPrice !== null) s.priceMin = s.priceMin === null ? g._min.totalPrice : Math.min(s.priceMin, g._min.totalPrice);
+    if (g._max.totalPrice !== null) s.priceMax = s.priceMax === null ? g._max.totalPrice : Math.max(s.priceMax, g._max.totalPrice);
+  }
+  const types = new Map<string, Set<string>>();
+  for (const g of byType) {
+    const label = g.configuration ?? g.unitType;
+    if (!label) continue;
+    let set = types.get(g.projectId);
+    if (!set) types.set(g.projectId, (set = new Set()));
+    set.add(label);
+  }
+  for (const [id, set] of types) get(id).types = [...set].sort();
+  return stats;
 }
 
 function unitTypeLabel(t: string): string {

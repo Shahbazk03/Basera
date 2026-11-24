@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PublicSettings, SETTING_SCHEMAS, SettingKey } from '@estate/shared';
-import { Prisma } from '../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 

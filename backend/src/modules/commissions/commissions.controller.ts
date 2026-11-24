@@ -139,9 +139,9 @@ export class CommissionsScheduler {
   async run(): Promise<void> {
     if (env().APP_ENV === 'test') return;
     try {
-      const created = await this.prisma.withAdvisoryLock('jobs:commission-generation', (tx) => this.commissions.generateForEligibleDeals(tx));
+      const created = await this.prisma.withJobLock('jobs:commission-generation', (tx) => this.commissions.generateForEligibleDeals(tx));
       if (created) this.logger.log(`Generated ${created} commission record(s)`);
-      const synced = await this.prisma.withAdvisoryLock('jobs:commission-payroll-sync', (tx) => this.commissions.syncPayrollPaidCommissions(tx));
+      const synced = await this.prisma.withJobLock('jobs:commission-payroll-sync', (tx) => this.commissions.syncPayrollPaidCommissions(tx));
       if (synced) this.logger.log(`Marked ${synced} payroll-paid commission(s) as paid`);
     } catch (err) {
       this.logger.error('Commission job failed', err instanceof Error ? err.stack : String(err));

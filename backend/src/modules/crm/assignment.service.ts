@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { assignmentMethodForRule, matchAssignmentRule, pickAssignee, type LeadRoutingFacts } from '@estate/shared';
-import { AssignmentMethod, Prisma } from '../../generated/prisma/client';
-import { Db, PrismaService, Tx } from '../../prisma/prisma.service';
+import { AssignmentMethod, Prisma } from '@prisma/client';
+import { Db, lockInTransaction, PrismaService, Tx } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit.service';
 import { env } from '../../config/env';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -132,7 +132,7 @@ export class AssignmentService {
     const preview = await this.decide(tx, lead.organizationId, facts);
     if (!preview.rule || !preview.team) return { assigneeId: null, outbox: [], reason: preview.reason };
     // Lock the team, then re-decide with the locked cursor to stay correct under concurrency.
-    await tx.$queryRaw`SELECT id FROM sales_teams WHERE id = ${preview.team.id}::uuid FOR UPDATE`;
+    await lockInTransaction(tx, `sales-team:${preview.team.id}`);
     const decision = await this.decide(tx, lead.organizationId, facts);
     if (!decision.assignee || !decision.team || !decision.rule) return { assigneeId: null, outbox: [], reason: decision.reason };
     await tx.salesTeam.update({ where: { id: decision.team.id }, data: { lastAssignedUserId: decision.assignee.id } });

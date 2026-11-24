@@ -14,7 +14,7 @@ export interface StatusChange {
 }
 
 /**
- * Server-side lifecycle automation (single instance at a time via Postgres advisory locks):
+ * Server-side lifecycle automation (single instance at a time via job leases):
  *  • every minute — release lapsed unit holds/reservations, then persist derived project statuses;
  *  • every 15 minutes — re-check DNS for custom domains awaiting verification.
  */
@@ -46,7 +46,7 @@ export class ProjectsScheduler {
   }
 
   async runStatusJobNow(): Promise<{ released: number; changes: StatusChange[] } | null> {
-    const result = await this.prisma.withAdvisoryLock('jobs:project-status', (tx) => this.runStatusJob(tx));
+    const result = await this.prisma.withJobLock('jobs:project-status', (tx) => this.runStatusJob(tx));
     if (result) {
       for (const c of result.changes) {
         this.logger.log(`Project ${c.projectId}: ${c.from} → ${c.to}`);
@@ -70,7 +70,7 @@ export class ProjectsScheduler {
   async domainTick(): Promise<void> {
     if (env().APP_ENV === 'test') return;
     try {
-      const checked = await this.prisma.withAdvisoryLock('jobs:domain-recheck', () => this.domains.recheckPending());
+      const checked = await this.prisma.withJobLock('jobs:domain-recheck', () => this.domains.recheckPending(), { transactional: false, ttlMs: 30 * 60_000 });
       if (checked) this.logger.log(`Re-checked ${checked} pending domain(s)`);
     } catch (e) {
       this.logger.error(`Domain re-check failed: ${(e as Error).message}`);

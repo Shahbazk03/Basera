@@ -8,7 +8,7 @@ One NestJS deployable with strongly separated modules. The business domains (mar
 ## ADR-002 Versions (chosen November 2026)
 - **NestJS 11** instead of 12: Nest 12 is ESM-only; the CommonJS toolchain (Jest/ts-jest, Prisma CJS client) is more mature on 11. Upgrade when the test toolchain is migrated.
 - **TypeScript 5.9.3** instead of 7.x: TS 7 is the native (Go) compiler and tools such as ts-jest support `<7` only.
-- **Prisma 7.10.1**: the npm `latest` tag pointed at an 8.0 release candidate; the current stable line is used. Prisma 7 requires a driver adapter (`@prisma/adapter-pg`) and `prisma.config.ts`.
+- **Prisma 6.19.3** (pinned exactly): Prisma 7 does not support MongoDB (see ADR-011). The code relies on tested details of this version (regex filters, null handling), so upgrade only with the MongoDB test suite green.
 - **Next.js 16.4 / React 19.3, Tailwind 4.3, Zod 4.6** — current stable releases.
 
 ## ADR-003 Two Next.js applications
@@ -26,11 +26,14 @@ The session id inside access tokens stays stable; only the refresh token rotates
 ## ADR-007 Notification outbox
 Messages are rows first, deliveries second. A provider outage can delay but never lose a notification; missing credentials produce `NOT_CONFIGURED`, never a fake `SENT`.
 
-## ADR-008 PostGIS via triggers
-`latitude`/`longitude` remain plain columns (simple for Prisma and forms); a trigger maintains a `geography(Point)` column with a GiST index for radius search. Triggers and CHECK constraints live in migration SQL; Prisma Migrate does not drift on them (verified).
+## ADR-008 Locations as GeoJSON maintained by the data layer
+`latitude`/`longitude` remain plain fields (simple for forms); the Prisma guard keeps a GeoJSON `location` point in step (formerly a PostGIS trigger) with a 2dsphere index. Nearby search uses `$geoWithin` and measures distances in the API, so it keeps working while `prisma db push` rebuilds indexes during a deploy.
 
 ## ADR-009 Customers are tenant-scoped
 A person enquiring with two brokers becomes two customer records, one in each organisation's CRM. Brokers never see each other's customers; platform staff with platform-wide grants can.
 
 ## ADR-010 No online property payments in v1
 Bookings and deals are recorded by the sales team; customer money received (`deal_payments`) is tracked separately from company revenue (invoice receipts) and commissions. No payment gateway is integrated.
+
+## ADR-011 MongoDB Atlas instead of PostgreSQL (November 2026)
+The owner chose MongoDB Atlas over a managed PostgreSQL. The schema moved to Prisma 6.19 (Prisma 7 has no MongoDB support); raw SQL was replaced by Prisma queries, aggregation and `findAndModify`. Guarantees PostgreSQL enforced are provided by `backend/src/prisma` (reference checks, explicit nulls, literal text search, calendar dates, validators for the former CHECK constraints, partial unique indexes, lock documents with transaction retries, job leases) and covered by `backend/test/mongo.int-spec.ts`. Trade-offs: references are checked by the application rather than the database, and a transaction that loses a write conflict is re-run (callbacks must have no side effects outside the database).

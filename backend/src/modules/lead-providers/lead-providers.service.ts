@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { formatDate, normalizePhone } from '@estate/shared';
 import type { z } from 'zod';
 import type { leadProviderAdminUpdateSchema, leadProviderSubmitSchema } from '@estate/shared';
-import { LeadIntakeStatus, Prisma } from '../../generated/prisma/client';
+import { LeadIntakeStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser } from '../../common/auth/auth-user';
 import { AuthContextService } from '../../common/auth/auth-context.service';

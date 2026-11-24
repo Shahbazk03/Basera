@@ -4,23 +4,22 @@
 name: estate-platform
 
 services:
-  postgres:
-    image: postgis/postgis:17-3.5-alpine
+  # MongoDB as a single-node replica set (Prisma needs a replica set for transactions and nested writes).
+  # Development only: no authentication, published on localhost. Production uses MongoDB Atlas.
+  mongo:
+    image: mongo:8.0
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-estate}
+    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
     ports:
-      - '${POSTGRES_HOST_PORT:-5433}:5432'
+      - '127.0.0.1:${MONGO_HOST_PORT:-27018}:27017'
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./infrastructure/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - mongodata:/data/db
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      # Initialises the replica set on first start, then reports its status.
+      test: ['CMD-SHELL', "mongosh --quiet --eval \"try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }\""]
       interval: 5s
-      timeout: 5s
-      retries: 20
+      timeout: 15s
+      retries: 30
 
   redis:
     image: redis:7.4-alpine
@@ -45,5 +44,5 @@ services:
       - '${MAILPIT_UI_PORT:-8025}:8025'
 
 volumes:
-  pgdata:
+  mongodata:
   redisdata:
