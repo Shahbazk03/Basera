@@ -27,20 +27,21 @@ export function FavouriteButton({ propertyId, variant = 'overlay' }: { propertyI
   const { data: user } = useCurrentUser();
   const { data: ids } = useFavouriteIds();
   const saved = Boolean(ids?.includes(propertyId));
+  // The action is fixed when clicked: `saved` flips as soon as the heart updates, before the server answers.
   const toggle = useMutation({
-    mutationFn: () => (saved ? api.delete(`/me/favourites/${propertyId}`) : api.post(`/me/favourites/${propertyId}`)),
-    onMutate: async () => {
+    mutationFn: (action: 'add' | 'remove') => (action === 'remove' ? api.delete(`/me/favourites/${propertyId}`) : api.post(`/me/favourites/${propertyId}`)),
+    onMutate: async (action) => {
       const key = ['favourites', user?.id ?? null];
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<string[]>(key) ?? [];
-      qc.setQueryData(key, saved ? prev.filter((x) => x !== propertyId) : [...prev, propertyId]);
+      qc.setQueryData(key, action === 'remove' ? prev.filter((x) => x !== propertyId) : prev.includes(propertyId) ? prev : [...prev, propertyId]);
       return { prev, key };
     },
-    onError: (err, _v, ctx) => {
+    onError: (err, _action, ctx) => {
       if (ctx) qc.setQueryData(ctx.key, ctx.prev);
       toast.error(errorMessage(err));
     },
-    onSuccess: () => toast.success(saved ? 'Removed from saved properties' : 'Saved to your account'),
+    onSuccess: (_data, action) => toast.success(action === 'remove' ? 'Removed from saved properties' : 'Saved to your account'),
   });
 
   return (
@@ -55,7 +56,7 @@ export function FavouriteButton({ propertyId, variant = 'overlay' }: { propertyI
           router.push(`/login?next=${encodeURIComponent(pathname)}`);
           return;
         }
-        toggle.mutate();
+        toggle.mutate(saved ? 'remove' : 'add');
       }}
       className={cn(
         'grid place-items-center rounded-full transition-colors',
