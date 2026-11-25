@@ -1,0 +1,23 @@
+# Render's free plan puts the backend to sleep after 15 minutes without traffic; the next visitor then
+# waits 30–60 s while it starts again. This pings the health check every 5 minutes so it stays awake
+# (one always-on free service fits in Render's 750 free hours a month). Free for public repositories.
+# Another address: set the repository variable KEEP_AWAKE_URL (Settings → Secrets and variables → Actions).
+# GitHub pauses scheduled workflows after 60 days without commits — re-enable it under Actions then.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the backend health check
+        env:
+          URL: ${{ vars.KEEP_AWAKE_URL || 'https://basera-api-h9d2.onrender.com/api/v1/health' }}
+        run: curl --fail --silent --show-error --max-time 120 --retry 2 --retry-delay 10 "$URL"

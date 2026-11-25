@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
 import { Eye, EyeOff, Lock, Mail } from 'lucide-react';
-import { loginSchema, type LoginInput } from '@estate/shared';
+import { loginSchema, type LoginInput, type SessionUser } from '@estate/shared';
 import { ApiError, errorMessage } from '@estate/api-client';
 import { Alert, Button, Field, Input } from '@estate/ui';
 import { api } from '@/lib/api';
@@ -46,8 +46,10 @@ function LoginForm() {
     inFlight.current = true;
     setError(null);
     try {
-      await api.post('/auth/login', values);
-      await qc.invalidateQueries({ queryKey: ['session'] });
+      const res = await api.post<{ user: SessionUser | null }>('/auth/login', values);
+      // The sign-in answer already says who this is: the dashboard need not ask the server again.
+      if (res.user) qc.setQueryData(['session'], res.user);
+      else await qc.invalidateQueries({ queryKey: ['session'] });
       router.replace(safeNext(params.get('next')));
     } catch (err) {
       if (err instanceof ApiError && err.code === 'INVALID_CREDENTIALS') lastRejected.current = { attempt, at: Date.now() };
