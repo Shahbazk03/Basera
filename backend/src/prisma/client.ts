@@ -9,6 +9,12 @@ type TxOptions = { maxWait?: number; timeout?: number };
 
 /** Attempts for an interactive transaction that loses a write conflict (each attempt re-runs the callback). */
 const TX_ATTEMPTS = 8;
+/**
+ * Prisma's defaults (wait 2 s for a connection, finish within 5 s) are too tight for a small server
+ * (e.g. Render's free plan: 0.1 CPU) or a distant database — a slow transaction then fails as a whole
+ * ("Transaction already closed"). MongoDB itself allows 60 s.
+ */
+const TX_DEFAULTS: TxOptions = { maxWait: 10_000, timeout: 20_000 };
 
 /** The interactive transaction the current async call chain is running in (see DbClient.$transaction). */
 const transactionContext = new AsyncLocalStorage<{ tx: Tx; open: boolean }>();
@@ -61,7 +67,7 @@ export class DbClient extends PrismaClient {
               }
             });
           },
-          options,
+          { ...TX_DEFAULTS, ...options },
         );
       } catch (e) {
         if (attempt >= TX_ATTEMPTS || !isWriteConflict(e)) throw e;

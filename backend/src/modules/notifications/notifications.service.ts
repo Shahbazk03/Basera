@@ -3,7 +3,7 @@ import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import type { PermissionKey } from '@estate/shared';
 import { env } from '../../config/env';
-import { DeliveryStatus, NotificationChannel } from '@prisma/client';
+import { DeliveryStatus, NotificationChannel, Prisma } from '@prisma/client';
 import { Db, PrismaService } from '../../prisma/prisma.service';
 import { SettingsService } from '../../common/settings.service';
 import { ChannelProvider, EmailProvider, SmsProvider, WhatsAppProvider } from './providers';
@@ -104,6 +104,10 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
     const outboxIds: string[] = [];
     const templates = await db.notificationTemplate.findMany({ where: { eventKey: input.eventKey, isActive: true } });
     const seen = new Set<string>();
+    // Written together at the end: one database round trip per kind instead of one per recipient
+    // (inside a transaction, one-by-one writes for every staff member made it too slow).
+    const inApp: Prisma.NotificationCreateManyInput[] = [];
+    const unsent: Prisma.CommunicationLogCreateManyInput[] = [];
 
     for (const r of input.recipients) {
       for (const channel of input.channels) {
@@ -116,7 +120,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         if (channel === 'IN_APP') {
           if (!r.userId || seen.has(`IN_APP:${r.userId}`)) continue;
           seen.add(`IN_APP:${r.userId}`);
-          await db.notification.create({ data: { userId: r.userId, eventKey: input.eventKey, title: subject ?? input.eventKey, body, link: input.link ?? null } });
+          inApp.push({ userId: r.userId, eventKey: input.eventKey, title: subject ?? input.eventKey, body, link: input.link ?? null });
           continue;
         }
         const address = channel === 'EMAIL' ? r.email : r.phone;
@@ -124,25 +128,27 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         seen.add(`${channel}:${address}`);
         const provider = this.providers[channel];
         const configured = provider.isConfigured();
-        const row = await db.communicationLog.create({
-          data: {
-            channel,
-            eventKey: input.eventKey,
-            recipient: address,
-            recipientUserId: r.userId ?? null,
-            subject,
-            body: !configured && NotificationsService.SECRET_BODY_EVENTS.has(input.eventKey) ? NotificationsService.WIPED_BODY : body,
-            provider: provider.name,
-            status: configured ? 'QUEUED' : 'NOT_CONFIGURED',
-            nextAttemptAt: configured ? new Date() : null,
-            lastError: configured ? null : provider.configurationHint(),
-            relatedType: input.relatedType ?? null,
-            relatedId: input.relatedId ?? null,
-          },
-        });
-        if (configured) outboxIds.push(row.id);
+        const row: Prisma.CommunicationLogCreateManyInput = {
+          channel,
+          eventKey: input.eventKey,
+          recipient: address,
+          recipientUserId: r.userId ?? null,
+          subject,
+          body: !configured && NotificationsService.SECRET_BODY_EVENTS.has(input.eventKey) ? NotificationsService.WIPED_BODY : body,
+          provider: provider.name,
+          status: configured ? 'QUEUED' : 'NOT_CONFIGURED',
+          nextAttemptAt: configured ? new Date() : null,
+          lastError: configured ? null : provider.configurationHint(),
+          relatedType: input.relatedType ?? null,
+          relatedId: input.relatedId ?? null,
+        };
+        // A queued message needs its id for the delivery queue; the others are only a record.
+        if (configured) outboxIds.push((await db.communicationLog.create({ data: row })).id);
+        else unsent.push(row);
       }
     }
+    if (inApp.length) await db.notification.createMany({ data: inApp });
+    if (unsent.length) await db.communicationLog.createMany({ data: unsent });
     return outboxIds;
   }
 
