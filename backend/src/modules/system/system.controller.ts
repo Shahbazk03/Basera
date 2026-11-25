@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Put, Query, ServiceUnavailableException } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, Put, Query, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import IORedis from 'ioredis';
@@ -11,6 +11,7 @@ import { ZodPipe } from '../../common/zod.pipe';
 import { AuditService } from '../../common/audit.service';
 import { SettingsService } from '../../common/settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SiteRevalidationService } from '../../common/site-revalidation';
 
 const startedAt = new Date();
 
@@ -21,7 +22,16 @@ export class SystemController {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
+    private readonly siteRevalidation: SiteRevalidationService,
   ) {}
+
+  /** The website checks here that a request to refresh its pages came from this API (one-time code). */
+  @Public()
+  @Get('public/site-revalidation/:code')
+  @HttpCode(204)
+  confirmSiteRevalidation(@Param('code') code: string): void {
+    if (!this.siteRevalidation.confirm(code)) throw new NotFoundException();
+  }
 
   /** Liveness: the process is up. */
   @Public()

@@ -11,6 +11,7 @@ import { RedisThrottlerStorage } from './common/redis-throttler.storage';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SystemController } from './modules/system/system.controller';
+import { SiteRevalidationInterceptor, SiteRevalidationService } from './common/site-revalidation';
 import { DOMAIN_MODULES } from './modules';
 
 @Module({
@@ -35,6 +36,8 @@ import { DOMAIN_MODULES } from './modules';
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_INTERCEPTOR, useClass: SerializeInterceptor },
+    SiteRevalidationService,
+    { provide: APP_INTERCEPTOR, useClass: SiteRevalidationInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
